@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="112" fill="#0f172a"/>
+  <!-- Shuriken body -->
+  <g transform="translate(256,256)">
+    <rect x="-30" y="-128" width="60" height="256" rx="16" fill="#6366f1" transform="rotate(0)"/>
+    <rect x="-30" y="-128" width="60" height="256" rx="16" fill="#6366f1" transform="rotate(45)"/>
+    <rect x="-30" y="-128" width="60" height="256" rx="16" fill="#818cf8" transform="rotate(90)"/>
+    <rect x="-30" y="-128" width="60" height="256" rx="16" fill="#818cf8" transform="rotate(135)"/>
+    <circle cx="0" cy="0" r="38" fill="#c7d2fe"/>
+    <circle cx="0" cy="0" r="16" fill="#0f172a"/>
+  </g>
+</svg>

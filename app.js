@@ -1,0 +1,741 @@
+/* AccentNinja — Core Application
+ * Routing, state, IndexedDB, and screen rendering.
+ * Screens: splash → setup (first launch) or home → settings / practice / results
+ */
+
+import { createTTSEngine, createAssessmentEngine, AZURE_VOICES, AZURE_REGIONS, webVoicePriority } from './engines.js';
+import { t, setLanguage } from './i18n.js';
+import { CORPUS } from './corpus.js';
+
+// ===========================================================================
+// Constants
+// ===========================================================================
+
+const DB_NAME    = 'accentninja-db';
+const DB_VERSION = 1;
+
+const DEFAULT_SETTINGS = {
+  ttsEngine:        'web',
+  assessmentEngine: 'web',
+  azureApiKey:      '',
+  azureRegion:      'westeurope',
+  accentTarget:     'us',
+  ttsVoice:         '',
+  language:         'fr',
+  theme:            'dark',
+  firstLaunch:      true,
+};
+
+// ===========================================================================
+// Application state
+// ===========================================================================
+
+const state = {
+  settings: { ...DEFAULT_SETTINGS },
+  engines:  { tts: null, assessment: null },
+  screen:   'splash',
+  db:       null,
+};
+
+// Transient "pending" settings in the Settings UI (not yet saved to DB).
+let pendingSettings = {};
+
+// ===========================================================================
+// IndexedDB helpers
+// ===========================================================================
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains('settings')) {
+        db.createObjectStore('settings');
+      }
+      if (!db.objectStoreNames.contains('sessions')) {
+        const store = db.createObjectStore('sessions', { keyPath: 'id', autoIncrement: true });
+        store.createIndex('date',  'date',  { unique: false });
+        store.createIndex('level', 'level', { unique: false });
+      }
+    };
+
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror   = e => reject(e.target.error);
+  });
+}
+
+function dbGet(storeName, key) {
+  return new Promise((resolve, reject) => {
+    const tx  = state.db.transaction(storeName, 'readonly');
+    const req = tx.objectStore(storeName).get(key);
+    req.onsuccess = e => resolve(e.target.result ?? null);
+    req.onerror   = e => reject(e.target.error);
+  });
+}
+
+function dbSet(storeName, key, value) {
+  return new Promise((resolve, reject) => {
+    const tx  = state.db.transaction(storeName, 'readwrite');
+    const req = tx.objectStore(storeName).put(value, key);
+    req.onsuccess = () => resolve();
+    req.onerror   = e => reject(e.target.error);
+  });
+}
+
+async function loadSettings() {
+  const saved = await dbGet('settings', 'current');
+  if (saved) {
+    state.settings = { ...DEFAULT_SETTINGS, ...saved };
+  }
+}
+
+async function persistSettings(updates) {
+  state.settings = { ...state.settings, ...updates };
+  await dbSet('settings', 'current', state.settings);
+  reinitEngines();
+}
+
+function reinitEngines() {
+  state.engines.tts        = createTTSEngine(state.settings);
+  state.engines.assessment = createAssessmentEngine(state.settings);
+}
+
+// ===========================================================================
+// Navigation / routing
+// ===========================================================================
+
+function navigate(screen) {
+  document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
+  const el = document.getElementById(`screen-${screen}`);
+  if (el) el.classList.add('active');
+  state.screen = screen;
+
+  // Render content for this screen
+  switch (screen) {
+    case 'home':     renderHomeScreen();     break;
+    case 'settings': renderSettingsScreen(); break;
+    case 'setup':    renderSetupScreen();    break;
+    case 'practice': renderPracticeScreen(); break;
+    case 'results':  renderResultsScreen();  break;
+  }
+
+  // Update hash (don't push 'home' or 'splash' to avoid spurious back entries)
+  const hash = (screen === 'home' || screen === 'splash') ? '' : screen;
+  if (window.location.hash.slice(1) !== hash) {
+    history.pushState({ screen }, '', hash ? `#${hash}` : window.location.pathname);
+  }
+}
+
+window.addEventListener('popstate', e => {
+  const target = e.state?.screen ?? 'home';
+  if (target !== state.screen) navigate(target);
+});
+
+// ===========================================================================
+// Toast notifications
+// ===========================================================================
+
+function showToast(message, type = 'info', duration = 3000) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast toast--${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('toast--visible'));
+  setTimeout(() => {
+    toast.classList.remove('toast--visible');
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
+}
+
+// ===========================================================================
+// HTML escape helper
+// ===========================================================================
+
+function esc(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// ===========================================================================
+// SVG icon helpers
+// ===========================================================================
+
+const ICON_BACK = `<svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+  <path d="M12 4l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`;
+
+const ICON_SETTINGS = `<svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+  <path d="M10 13a3 3 0 100-6 3 3 0 000 6z" stroke="currentColor" stroke-width="1.5"/>
+  <path d="M17.66 10.44a1.7 1.7 0 000-1.88l-1.13-1.58a1.7 1.7 0 00-.71-.59l-1.8-.74a1.7 1.7 0 00-1.87.47l-.42.49a1.7 1.7 0 01-2.66 0l-.42-.49a1.7 1.7 0 00-1.88-.47l-1.8.74c-.28.12-.52.31-.7.59L2.34 8.56a1.7 1.7 0 000 1.88l1.13 1.58c.18.27.43.47.7.59l1.8.74c.68.28 1.46.09 1.88-.47l.42-.49a1.7 1.7 0 012.66 0l.42.49c.42.56 1.2.75 1.87.47l1.8-.74c.28-.12.53-.32.71-.59l1.13-1.58z" stroke="currentColor" stroke-width="1.5"/>
+</svg>`;
+
+const ICON_SHURIKEN = `<svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true">
+  <rect x="-2" y="-10" width="4" height="20" rx="1.5" fill="#6366f1" transform="translate(14,14) rotate(0)"/>
+  <rect x="-2" y="-10" width="4" height="20" rx="1.5" fill="#6366f1" transform="translate(14,14) rotate(45)"/>
+  <rect x="-2" y="-10" width="4" height="20" rx="1.5" fill="#818cf8" transform="translate(14,14) rotate(90)"/>
+  <rect x="-2" y="-10" width="4" height="20" rx="1.5" fill="#818cf8" transform="translate(14,14) rotate(135)"/>
+  <circle cx="14" cy="14" r="3.5" fill="#c7d2fe"/>
+  <circle cx="14" cy="14" r="1.5" fill="#0f172a"/>
+</svg>`;
+
+// ===========================================================================
+// Splash screen (static HTML — always present)
+// ===========================================================================
+
+function showSplash() {
+  document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
+  document.getElementById('screen-splash').classList.add('active');
+}
+
+// ===========================================================================
+// Setup screen (first launch)
+// ===========================================================================
+
+function renderSetupScreen() {
+  const screen = document.getElementById('screen-setup');
+  screen.innerHTML = `
+    <main class="setup-main">
+      <div class="setup-hero">
+        <div class="setup-logo-large">${ICON_SHURIKEN}</div>
+        <h1 class="setup-title">${t('app.title')}</h1>
+        <p class="setup-subtitle">${t('setup.subtitle')}</p>
+      </div>
+
+      <div class="setup-card">
+        <h2 class="setup-card-title">${t('setup.azureTitle')}</h2>
+        <p class="setup-info">${t('setup.azureInfo')}</p>
+
+        <div class="form-group">
+          <label class="form-label" for="setup-api-key">${t('settings.azureApiKey.label')}</label>
+          <input class="form-input" type="password" id="setup-api-key"
+                 placeholder="${t('settings.azureApiKey.placeholder')}"
+                 autocomplete="off" autocorrect="off" spellcheck="false">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="setup-region">${t('settings.azureRegion.label')}</label>
+          <select class="form-select" id="setup-region">
+            ${AZURE_REGIONS.map(r =>
+              `<option value="${esc(r.value)}" ${r.value === 'westeurope' ? 'selected' : ''}>${esc(r.label)}</option>`
+            ).join('')}
+          </select>
+        </div>
+      </div>
+
+      <div class="setup-actions">
+        <button class="btn btn-primary btn-full btn-lg" id="setup-start-btn">
+          ${t('setup.start')}
+        </button>
+        <button class="btn btn-text" id="setup-skip-btn">
+          ${t('setup.skip')}
+        </button>
+      </div>
+    </main>
+  `;
+
+  document.getElementById('setup-start-btn').addEventListener('click', async () => {
+    const key    = document.getElementById('setup-api-key').value.trim();
+    const region = document.getElementById('setup-region').value;
+
+    const updates = { firstLaunch: false };
+    if (key) {
+      updates.azureApiKey       = key;
+      updates.azureRegion       = region;
+      updates.assessmentEngine  = 'azure';
+      updates.ttsEngine         = 'azure';
+    }
+
+    await persistSettings(updates);
+    navigate('home');
+  });
+
+  document.getElementById('setup-skip-btn').addEventListener('click', async () => {
+    await persistSettings({ firstLaunch: false });
+    navigate('home');
+  });
+}
+
+// ===========================================================================
+// Home screen
+// ===========================================================================
+
+function renderHomeScreen() {
+  const screen = document.getElementById('screen-home');
+  const levels = Object.entries(CORPUS);
+
+  screen.innerHTML = `
+    <header class="app-header">
+      <div class="header-title-group">
+        ${ICON_SHURIKEN}
+        <h1 class="header-title">${t('app.title')}</h1>
+      </div>
+      <div class="header-actions">
+        <button class="btn-icon" id="home-settings-btn" aria-label="${t('nav.settings')}">
+          ${ICON_SETTINGS}
+        </button>
+      </div>
+    </header>
+
+    <div class="screen-body">
+      <main class="home-main">
+        <div>
+          <p class="home-section-title">${t('home.title')}</p>
+        </div>
+
+        <div class="level-grid" id="level-grid">
+          ${levels.map(([num, level]) => {
+            const hasItems = level.items?.length > 0;
+            const locked   = !hasItems;
+            return `
+              <button
+                class="level-card ${locked ? 'level-card--locked' : ''}"
+                data-level="${num}"
+                ${locked ? 'aria-disabled="true"' : ''}
+                title="${esc(level.nameEn || level.name)}"
+              >
+                <span class="level-number">${num}</span>
+                <span class="level-icon">${locked ? '🔒' : '⚡'}</span>
+              </button>
+            `;
+          }).join('')}
+        </div>
+
+        <div class="card" style="opacity:0.5">
+          <p class="text-muted text-sm text-center">${t('home.levels.coming')}</p>
+        </div>
+      </main>
+    </div>
+  `;
+
+  document.getElementById('home-settings-btn').addEventListener('click', () => navigate('settings'));
+
+  document.querySelectorAll('.level-card:not(.level-card--locked)').forEach(btn => {
+    btn.addEventListener('click', () => {
+      // Practice screen will use this when Part 2 is implemented
+      navigate('practice');
+    });
+  });
+}
+
+// ===========================================================================
+// Practice screen (stub — expanded in Part 2)
+// ===========================================================================
+
+function renderPracticeScreen() {
+  const screen = document.getElementById('screen-practice');
+  screen.innerHTML = `
+    <header class="app-header">
+      <button class="btn-icon" id="practice-back-btn" aria-label="${t('nav.back')}">
+        ${ICON_BACK}
+      </button>
+      <h1 class="header-title">${t('nav.practice')}</h1>
+    </header>
+
+    <div class="screen-body">
+      <div class="practice-main">
+        <div class="coming-soon-icon">🥷</div>
+        <h2 class="coming-soon-title">${t('nav.practice')}</h2>
+        <p class="coming-soon-text">${t('practice.coming')}</p>
+        <button class="btn btn-secondary" id="practice-back-btn2">${t('nav.back')}</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('practice-back-btn').addEventListener('click', () => navigate('home'));
+  document.getElementById('practice-back-btn2').addEventListener('click', () => navigate('home'));
+}
+
+// ===========================================================================
+// Results screen (stub — expanded in Part 2)
+// ===========================================================================
+
+function renderResultsScreen() {
+  const screen = document.getElementById('screen-results');
+  screen.innerHTML = `
+    <header class="app-header">
+      <button class="btn-icon" id="results-back-btn" aria-label="${t('nav.back')}">
+        ${ICON_BACK}
+      </button>
+      <h1 class="header-title">${t('results.title')}</h1>
+    </header>
+
+    <div class="screen-body">
+      <div class="results-main">
+        <div class="coming-soon-icon">📊</div>
+        <h2 class="coming-soon-title">${t('results.title')}</h2>
+        <p class="coming-soon-text">${t('results.coming')}</p>
+        <button class="btn btn-secondary" id="results-back-btn2">${t('nav.back')}</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('results-back-btn').addEventListener('click', () => navigate('home'));
+  document.getElementById('results-back-btn2').addEventListener('click', () => navigate('home'));
+}
+
+// ===========================================================================
+// Settings screen
+// ===========================================================================
+
+function renderSettingsScreen() {
+  const screen = document.getElementById('screen-settings');
+  pendingSettings = { ...state.settings };
+
+  const s          = pendingSettings;
+  const azureVisible = s.ttsEngine === 'azure' || s.assessmentEngine === 'azure';
+
+  screen.innerHTML = `
+    <header class="app-header">
+      <button class="btn-icon" id="settings-back-btn" aria-label="${t('nav.back')}">
+        ${ICON_BACK}
+      </button>
+      <h1 class="header-title">${t('settings.title')}</h1>
+    </header>
+
+    <div class="screen-body">
+      <div class="settings-main">
+        <div class="settings-body">
+
+          <!-- TTS Engine -->
+          <section class="settings-section">
+            <p class="settings-section-title">${t('settings.ttsEngine.label')}</p>
+            <div class="toggle-group" id="tts-engine-toggle" role="group" aria-label="${t('settings.ttsEngine.label')}">
+              <button class="toggle-option ${s.ttsEngine === 'web' ? 'active' : ''}"
+                      data-value="web" type="button">
+                ${t('settings.ttsEngine.web')}
+              </button>
+              <button class="toggle-option ${s.ttsEngine === 'azure' ? 'active' : ''}"
+                      data-value="azure" type="button">
+                ${t('settings.ttsEngine.azure')}
+              </button>
+            </div>
+          </section>
+
+          <!-- Assessment Engine -->
+          <section class="settings-section">
+            <p class="settings-section-title">${t('settings.assessmentEngine.label')}</p>
+            <div class="toggle-group" id="assessment-engine-toggle" role="group" aria-label="${t('settings.assessmentEngine.label')}">
+              <button class="toggle-option ${s.assessmentEngine === 'azure' ? 'active' : ''}"
+                      data-value="azure" type="button">
+                ${t('settings.assessmentEngine.azure')}
+              </button>
+              <button class="toggle-option ${s.assessmentEngine === 'web' ? 'active' : ''}"
+                      data-value="web" type="button">
+                ${t('settings.assessmentEngine.web')}
+              </button>
+            </div>
+          </section>
+
+          <!-- Azure Credentials (conditional) -->
+          <section class="settings-section azure-settings-section ${azureVisible ? '' : 'hidden'}"
+                   id="azure-settings-section"
+                   style="max-height: ${azureVisible ? '1000px' : '0'}">
+            <p class="settings-section-title">${t('settings.azureSection')}</p>
+
+            <div class="form-group">
+              <label class="form-label" for="azure-api-key">${t('settings.azureApiKey.label')}</label>
+              <input class="form-input" type="password" id="azure-api-key"
+                     value="${esc(s.azureApiKey)}"
+                     placeholder="${t('settings.azureApiKey.placeholder')}"
+                     autocomplete="off" autocorrect="off" spellcheck="false">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="azure-region">${t('settings.azureRegion.label')}</label>
+              <select class="form-select" id="azure-region">
+                ${AZURE_REGIONS.map(r =>
+                  `<option value="${esc(r.value)}" ${s.azureRegion === r.value ? 'selected' : ''}>${esc(r.label)}</option>`
+                ).join('')}
+              </select>
+            </div>
+
+            <div>
+              <button class="btn btn-secondary btn-sm" id="test-connection-btn" type="button">
+                ${t('settings.testConnection')}
+              </button>
+              <div class="connection-status" id="connection-status"></div>
+            </div>
+          </section>
+
+          <!-- Accent Target -->
+          <section class="settings-section">
+            <p class="settings-section-title">${t('settings.accentTarget.label')}</p>
+            <div class="toggle-group" id="accent-toggle" role="group" aria-label="${t('settings.accentTarget.label')}">
+              <button class="toggle-option ${s.accentTarget === 'us' ? 'active' : ''}"
+                      data-value="us" type="button">
+                🇺🇸 ${t('settings.accentTarget.us')}
+              </button>
+              <button class="toggle-option ${s.accentTarget === 'uk' ? 'active' : ''}"
+                      data-value="uk" type="button">
+                🇬🇧 ${t('settings.accentTarget.uk')}
+              </button>
+            </div>
+          </section>
+
+          <!-- TTS Voice -->
+          <section class="settings-section">
+            <p class="settings-section-title">${t('settings.ttsVoice.label')}</p>
+            <select class="form-select" id="tts-voice-select">
+              <option value="">${t('settings.ttsVoice.loading')}</option>
+            </select>
+          </section>
+
+          <!-- UI Preferences -->
+          <section class="settings-section">
+            <p class="settings-section-title">${t('settings.preferences')}</p>
+
+            <div class="form-group">
+              <label class="form-label" for="ui-language">${t('settings.language.label')}</label>
+              <select class="form-select" id="ui-language">
+                <option value="fr" ${s.language === 'fr' ? 'selected' : ''}>🇫🇷 Français</option>
+                <option value="en" ${s.language === 'en' ? 'selected' : ''}>🇬🇧 English</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="ui-theme">${t('settings.theme.label')}</label>
+              <select class="form-select" id="ui-theme">
+                <option value="dark"  ${s.theme === 'dark'  ? 'selected' : ''}>${t('settings.theme.dark')}</option>
+                <option value="light" ${s.theme === 'light' ? 'selected' : ''}>${t('settings.theme.light')}</option>
+              </select>
+            </div>
+          </section>
+
+          <!-- Save button -->
+          <div style="padding: var(--space-6) 0 var(--space-4)">
+            <button class="btn btn-primary btn-full" id="save-settings-btn" type="button">
+              ${t('settings.save')}
+            </button>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  `;
+
+  attachSettingsEvents();
+  populateVoiceList();
+}
+
+// ---------------------------------------------------------------------------
+// Settings screen event wiring
+// ---------------------------------------------------------------------------
+
+function attachSettingsEvents() {
+  // Back button
+  document.getElementById('settings-back-btn').addEventListener('click', () => navigate('home'));
+
+  // TTS engine toggle
+  wireToggleGroup('tts-engine-toggle', value => {
+    pendingSettings.ttsEngine = value;
+    updateAzureVisibility();
+    populateVoiceList();
+  });
+
+  // Assessment engine toggle
+  wireToggleGroup('assessment-engine-toggle', value => {
+    pendingSettings.assessmentEngine = value;
+    updateAzureVisibility();
+  });
+
+  // Accent toggle
+  wireToggleGroup('accent-toggle', value => {
+    pendingSettings.accentTarget = value;
+    populateVoiceList();
+  });
+
+  // Live-update pending settings from text inputs / selects
+  const liveFields = ['azure-api-key', 'azure-region', 'ui-language', 'ui-theme', 'tts-voice-select'];
+  liveFields.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', () => {
+      if (id === 'azure-api-key')    pendingSettings.azureApiKey    = el.value;
+      if (id === 'azure-region')     pendingSettings.azureRegion    = el.value;
+      if (id === 'ui-language')      pendingSettings.language       = el.value;
+      if (id === 'ui-theme')         pendingSettings.theme          = el.value;
+      if (id === 'tts-voice-select') pendingSettings.ttsVoice       = el.value;
+
+      // Live theme preview
+      if (id === 'ui-theme') {
+        document.documentElement.dataset.theme = el.value;
+      }
+    });
+  });
+
+  // Test Azure connection
+  const testBtn = document.getElementById('test-connection-btn');
+  if (testBtn) {
+    testBtn.addEventListener('click', async () => {
+      const statusEl = document.getElementById('connection-status');
+      statusEl.textContent = t('settings.testing');
+      statusEl.className   = 'connection-status';
+      testBtn.disabled = true;
+
+      // Temporarily build an engine with pending settings to test
+      const { AzureAssessmentEngine } = await import('./engines.js');
+      const engine = new AzureAssessmentEngine(pendingSettings);
+      try {
+        await engine.testConnection();
+        statusEl.textContent = t('settings.connectionOk');
+        statusEl.className   = 'connection-status connection-status--ok';
+      } catch (err) {
+        statusEl.textContent = `${t('settings.connectionFail')}: ${err.message}`;
+        statusEl.className   = 'connection-status connection-status--fail';
+      } finally {
+        testBtn.disabled = false;
+      }
+    });
+  }
+
+  // Save button
+  document.getElementById('save-settings-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('save-settings-btn');
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      await persistSettings(pendingSettings);
+      setLanguage(state.settings.language);
+      document.documentElement.dataset.theme = state.settings.theme;
+      showToast(t('settings.saved'), 'success');
+    } catch (err) {
+      showToast(`Error: ${err.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = t('settings.save');
+    }
+  });
+}
+
+/** Wire a toggle group — marks active button and calls onChange(value). */
+function wireToggleGroup(groupId, onChange) {
+  const group = document.getElementById(groupId);
+  if (!group) return;
+  group.querySelectorAll('.toggle-option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      group.querySelectorAll('.toggle-option').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      onChange(btn.dataset.value);
+    });
+  });
+}
+
+/** Show or hide the Azure credentials section based on pending engine selections. */
+function updateAzureVisibility() {
+  const section = document.getElementById('azure-settings-section');
+  if (!section) return;
+  const show = pendingSettings.ttsEngine === 'azure' || pendingSettings.assessmentEngine === 'azure';
+  if (show) {
+    section.classList.remove('hidden');
+    section.style.maxHeight = '1000px';
+  } else {
+    section.classList.add('hidden');
+    section.style.maxHeight = '0';
+  }
+}
+
+/** Populate the TTS voice dropdown based on pendingSettings.ttsEngine and accentTarget. */
+function populateVoiceList() {
+  const select = document.getElementById('tts-voice-select');
+  if (!select) return;
+
+  const { ttsEngine, accentTarget, ttsVoice } = pendingSettings;
+
+  if (ttsEngine === 'azure') {
+    const voices = AZURE_VOICES[accentTarget] ?? AZURE_VOICES.us;
+    select.innerHTML = voices.map(v =>
+      `<option value="${esc(v.name)}" ${ttsVoice === v.name ? 'selected' : ''}>${esc(v.label)}</option>`
+    ).join('');
+    return;
+  }
+
+  // Web Speech API
+  const lang = accentTarget === 'uk' ? 'en-GB' : 'en-US';
+
+  function renderWebVoices() {
+    const all = window.speechSynthesis?.getVoices() ?? [];
+    const filtered = all
+      .filter(v => v.lang.startsWith(lang))
+      .sort((a, b) => webVoicePriority(a) - webVoicePriority(b));
+
+    if (filtered.length === 0) {
+      select.innerHTML = `<option value="">${t('settings.ttsVoice.none')}</option>`;
+      return;
+    }
+
+    select.innerHTML =
+      `<option value="">${t('settings.ttsVoice.default')}</option>` +
+      filtered.map(v =>
+        `<option value="${esc(v.name)}" ${ttsVoice === v.name ? 'selected' : ''}>${esc(v.name)}</option>`
+      ).join('');
+  }
+
+  if (window.speechSynthesis?.getVoices().length > 0) {
+    renderWebVoices();
+  } else {
+    select.innerHTML = `<option value="">${t('settings.ttsVoice.loading')}</option>`;
+    window.speechSynthesis?.addEventListener('voiceschanged', renderWebVoices, { once: true });
+  }
+}
+
+// ===========================================================================
+// Service Worker registration
+// ===========================================================================
+
+function registerServiceWorker() {
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(err => {
+        console.warn('[AccentNinja] SW registration failed:', err);
+      });
+    });
+  }
+}
+
+// ===========================================================================
+// App initialisation
+// ===========================================================================
+
+async function init() {
+  showSplash();
+
+  try {
+    state.db = await openDB();
+    await loadSettings();
+  } catch (err) {
+    console.error('[AccentNinja] DB init failed, using defaults:', err);
+  }
+
+  // Apply language + theme from saved settings
+  setLanguage(state.settings.language);
+  document.documentElement.dataset.theme = state.settings.theme;
+  document.documentElement.lang = state.settings.language;
+
+  // Initialise engines
+  reinitEngines();
+
+  // Determine initial screen
+  if (state.settings.firstLaunch) {
+    navigate('setup');
+  } else {
+    // Honour hash if present
+    const hash = window.location.hash.slice(1);
+    const validScreens = ['home', 'settings', 'practice', 'results'];
+    navigate(validScreens.includes(hash) ? hash : 'home');
+  }
+
+  registerServiceWorker();
+}
+
+// Boot when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}

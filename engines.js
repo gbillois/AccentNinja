@@ -1,0 +1,595 @@
+/* AccentNinja Engines
+ * Abstraction layer for TTS and pronunciation assessment.
+ *
+ * Two TTS engines:    WebSpeechTTS | AzureTTS
+ * Two assessment engines: AzureAssessmentEngine | WebSpeechAssessmentEngine
+ *
+ * CRITICAL: Azure assessment uses AudioConfig.fromDefaultMicrophoneInput()
+ * (not MediaRecorder) to avoid PCM format issues. A parallel MediaRecorder
+ * on a separate getUserMedia() stream captures audio for playback only.
+ */
+
+// ---------------------------------------------------------------------------
+// Azure SDK accessor — loaded as a global <script> in index.html
+// ---------------------------------------------------------------------------
+
+function getSpeechSDK() {
+  const sdk = window.SpeechSDK;
+  if (!sdk) {
+    throw new Error('Azure Speech SDK not loaded. Check your internet connection.');
+  }
+  return sdk;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Returns a priority number for sorting Web Speech voices (lower = better). */
+export function webVoicePriority(voice) {
+  if (voice.name.includes('Google')) return 0;
+  // Apple voices: identified by voiceURI or known names
+  const appleNames = ['Samantha', 'Daniel', 'Karen', 'Moira', 'Tessa', 'Fiona', 'Victoria', 'Nicky', 'Ava', 'Zoe'];
+  if (appleNames.some(n => voice.name.includes(n)) || voice.voiceURI?.includes('com.apple')) return 1;
+  if (voice.name.includes('Microsoft')) return 2;
+  return 3;
+}
+
+/** Simple Levenshtein-based string similarity (0–1). */
+function stringSimilarity(a, b) {
+  if (a === b) return 1;
+  if (!a.length || !b.length) return 0;
+  const dp = Array.from({ length: a.length + 1 }, (_, i) =>
+    Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+  );
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return 1 - dp[a.length][b.length] / Math.max(a.length, b.length);
+}
+
+/** Normalise text for word-level comparison. */
+function normalizeWords(text) {
+  return text.toLowerCase().replace(/[^a-z0-9'\s]/g, '').split(/\s+/).filter(Boolean);
+}
+
+// ---------------------------------------------------------------------------
+// Parallel MediaRecorder setup (used by both assessment engines)
+// ---------------------------------------------------------------------------
+
+async function startParallelRecorder() {
+  let stream = null;
+  let mediaRecorder = null;
+  const chunks = [];
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+  } catch (err) {
+    throw new Error(`Microphone access denied: ${err.message}`);
+  }
+
+  return {
+    start() { try { mediaRecorder.start(); } catch { /* ignore */ } },
+    stop() {
+      return new Promise(resolve => {
+        if (!mediaRecorder || mediaRecorder.state === 'inactive') { resolve(null); return; }
+        mediaRecorder.onstop = () => {
+          const blob = chunks.length
+            ? new Blob(chunks, { type: mediaRecorder.mimeType })
+            : null;
+          if (stream) stream.getTracks().forEach(t => t.stop());
+          resolve(blob);
+        };
+        try { mediaRecorder.stop(); } catch { resolve(null); }
+      });
+    },
+    releaseStream() {
+      if (stream) stream.getTracks().forEach(t => t.stop());
+    },
+  };
+}
+
+// ===========================================================================
+// TTS Engines
+// ===========================================================================
+
+export class WebSpeechTTS {
+  constructor(settings) {
+    this.settings = settings;
+  }
+
+  /**
+   * Return available voices for the current accent target, sorted by priority.
+   * Async because voices may not be ready immediately.
+   */
+  getAvailableVoices() {
+    const lang = this.settings.accentTarget === 'uk' ? 'en-GB' : 'en-US';
+    return window.speechSynthesis
+      .getVoices()
+      .filter(v => v.lang.startsWith(lang))
+      .sort((a, b) => webVoicePriority(a) - webVoicePriority(b));
+  }
+
+  async speak(text) {
+    return new Promise((resolve, reject) => {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      const lang = this.settings.accentTarget === 'uk' ? 'en-GB' : 'en-US';
+      const voices = this.getAvailableVoices();
+
+      if (this.settings.ttsVoice) {
+        const match = window.speechSynthesis.getVoices().find(v => v.name === this.settings.ttsVoice);
+        if (match) utterance.voice = match;
+      } else if (voices.length > 0) {
+        utterance.voice = voices[0];
+      }
+
+      utterance.lang = lang;
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+      utterance.volume = 1.0;
+      utterance.onend = resolve;
+      utterance.onerror = e => reject(new Error(`TTS error: ${e.error}`));
+
+      this._utterance = utterance;
+      window.speechSynthesis.speak(utterance);
+    });
+  }
+
+  stop() {
+    window.speechSynthesis.cancel();
+    this._utterance = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+export class AzureTTS {
+  constructor(settings) {
+    this.settings = settings;
+    this._synthesizer = null;
+  }
+
+  getAvailableVoices() {
+    return AZURE_VOICES[this.settings.accentTarget] ?? AZURE_VOICES.us;
+  }
+
+  _resolveVoiceName() {
+    const voices = this.getAvailableVoices();
+    const stored = this.settings.ttsVoice;
+    if (stored && voices.find(v => v.name === stored)) return stored;
+    return voices[0].name;
+  }
+
+  async speak(text) {
+    const SpeechSDK = getSpeechSDK();
+    const speechConfig = SpeechSDK.SpeechConfig.fromSubscription(
+      this.settings.azureApiKey,
+      this.settings.azureRegion
+    );
+    speechConfig.speechSynthesisVoiceName = this._resolveVoiceName();
+
+    return new Promise((resolve, reject) => {
+      const synthesizer = new SpeechSDK.SpeechSynthesizer(speechConfig, null);
+      this._synthesizer = synthesizer;
+
+      synthesizer.speakTextAsync(
+        text,
+        result => {
+          synthesizer.close();
+          this._synthesizer = null;
+          if (result.reason === SpeechSDK.ResultReason.SynthesizingAudioCompleted) {
+            resolve(result);
+          } else {
+            reject(new Error(`Azure TTS failed: ${result.errorDetails}`));
+          }
+        },
+        err => {
+          synthesizer.close();
+          this._synthesizer = null;
+          reject(new Error(`Azure TTS error: ${err}`));
+        }
+      );
+    });
+  }
+
+  stop() {
+    if (this._synthesizer) {
+      try { this._synthesizer.close(); } catch { /* ignore */ }
+      this._synthesizer = null;
+    }
+  }
+}
+
+// ===========================================================================
+// Assessment Engines
+//
+// Both engines return a normalised AssessmentResult object:
+// {
+//   engine: 'azure' | 'web',
+//   pronScore, accuracyScore, fluencyScore, completenessScore,
+//   prosodyScore,      // null for WebSpeech and en-GB Azure
+//   recognizedText,
+//   words: [{ word, accuracyScore, errorType, phonemes: [{ phoneme, accuracyScore }] }],
+//   recordingBlob,     // Blob for playback, not persisted
+//   raw,               // Raw engine result
+// }
+// ===========================================================================
+
+export class AzureAssessmentEngine {
+  constructor(settings) {
+    this.settings = settings;
+  }
+
+  _buildSpeechConfig() {
+    const SpeechSDK = getSpeechSDK();
+    const locale = this.settings.accentTarget === 'uk' ? 'en-GB' : 'en-US';
+    const config = SpeechSDK.SpeechConfig.fromSubscription(
+      this.settings.azureApiKey,
+      this.settings.azureRegion
+    );
+    config.speechRecognitionLanguage = locale;
+    config.setProperty(
+      SpeechSDK.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs,
+      '1500'
+    );
+    return config;
+  }
+
+  _buildPronConfig(referenceText) {
+    const SpeechSDK = getSpeechSDK();
+    const locale = this.settings.accentTarget === 'uk' ? 'en-GB' : 'en-US';
+    const pronConfig = new SpeechSDK.PronunciationAssessmentConfig(
+      referenceText,
+      SpeechSDK.PronunciationAssessmentGradingSystem.HundredMark,
+      SpeechSDK.PronunciationAssessmentGranularity.Phoneme,
+      true // enableMiscue
+    );
+    pronConfig.phonemeAlphabet = 'IPA';
+    // Prosody assessment is only available for en-US
+    if (locale === 'en-US') {
+      pronConfig.enableProsodyAssessment = true;
+    }
+    return pronConfig;
+  }
+
+  /**
+   * Assess a single utterance against a reference text.
+   * @param {string} referenceText
+   * @param {(status: string) => void} onStatus - Called with status keys
+   * @returns {Promise<AssessmentResult>}
+   */
+  async assess(referenceText, onStatus = () => {}) {
+    const SpeechSDK = getSpeechSDK();
+
+    if (!this.settings.azureApiKey) {
+      throw new Error('Azure API key required');
+    }
+
+    // 1. Start parallel MediaRecorder for playback
+    const recorder = await startParallelRecorder();
+
+    // 2. Build Azure recognizer with pronunciation assessment
+    const speechConfig = this._buildSpeechConfig();
+    const pronConfig = this._buildPronConfig(referenceText);
+    const audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
+    const recognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);
+    pronConfig.applyTo(recognizer);
+
+    return new Promise((resolve, reject) => {
+      const TIMEOUT_MS = 20000;
+      let timeoutId = null;
+      let settled = false;
+
+      const finish = async (result, error) => {
+        if (settled) return;
+        settled = true;
+        if (timeoutId) clearTimeout(timeoutId);
+        try { recognizer.close(); } catch { /* ignore */ }
+        const recordingBlob = await recorder.stop();
+        if (error) { reject(error); return; }
+        const parsed = parseAzureResult(result, SpeechSDK);
+        resolve({ ...parsed, recordingBlob });
+      };
+
+      recognizer.sessionStarted = () => onStatus('recording');
+
+      timeoutId = setTimeout(() => {
+        finish(null, new Error('Assessment timed out after 20s'));
+      }, TIMEOUT_MS);
+
+      // Start parallel recording alongside Azure SDK mic capture
+      recorder.start();
+      onStatus('connecting');
+
+      recognizer.recognizeOnceAsync(
+        result => finish(result, null),
+        err  => finish(null, new Error(`Azure recognition failed: ${err}`))
+      );
+    });
+  }
+
+  /**
+   * Test Azure connectivity by requesting an auth token.
+   * Throws on failure.
+   */
+  async testConnection() {
+    if (!this.settings.azureApiKey || !this.settings.azureRegion) {
+      throw new Error('API key and region are required');
+    }
+    const url = `https://${this.settings.azureRegion}.api.cognitive.microsoft.com/sts/v1.0/issueToken`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Ocp-Apim-Subscription-Key': this.settings.azureApiKey },
+    });
+    if (!resp.ok) {
+      throw new Error(`Azure returned HTTP ${resp.status}: ${resp.statusText}`);
+    }
+    return true;
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+export class WebSpeechAssessmentEngine {
+  constructor(settings) {
+    this.settings = settings;
+    this._recognition = null;
+  }
+
+  /**
+   * Assess a single utterance using the Web Speech API.
+   * Returns a normalised result with word-level diff (no phoneme detail).
+   * @param {string} referenceText
+   * @param {(status: string) => void} onStatus
+   * @returns {Promise<AssessmentResult>}
+   */
+  async assess(referenceText, onStatus = () => {}) {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      throw new Error('Web Speech API not supported in this browser. Use Chrome, Edge or Safari.');
+    }
+
+    const recorder = await startParallelRecorder();
+
+    const recognition = new SpeechRecognition();
+    const locale = this.settings.accentTarget === 'uk' ? 'en-GB' : 'en-US';
+    recognition.lang = locale;
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    this._recognition = recognition;
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+
+      const finish = async (recognizedText, confidence, error) => {
+        if (settled) return;
+        settled = true;
+        this._recognition = null;
+        const recordingBlob = await recorder.stop();
+        if (error) { reject(error); return; }
+        const result = computeWebSpeechResult(referenceText, recognizedText, confidence);
+        resolve({ ...result, recordingBlob });
+      };
+
+      recognition.onstart = () => {
+        recorder.start();
+        onStatus('recording');
+      };
+
+      recognition.onresult = event => {
+        const r = event.results[0][0];
+        finish(r.transcript, r.confidence ?? 0.5, null);
+      };
+
+      recognition.onerror = event => {
+        if (event.error === 'no-speech') {
+          finish('', 0, new Error('No speech detected'));
+        } else {
+          finish(null, null, new Error(`Speech recognition error: ${event.error}`));
+        }
+      };
+
+      recognition.onend = () => {
+        // If neither onresult nor onerror fired (e.g. browser ended early), reject.
+        if (!settled) finish('', 0, new Error('Recognition ended without result'));
+      };
+
+      onStatus('connecting');
+      recognition.start();
+    });
+  }
+
+  stop() {
+    if (this._recognition) {
+      try { this._recognition.stop(); } catch { /* ignore */ }
+      this._recognition = null;
+    }
+  }
+}
+
+// ===========================================================================
+// Azure result parser
+// ===========================================================================
+
+function parseAzureResult(result, SpeechSDK) {
+  if (result.reason === SpeechSDK.ResultReason.NoMatch) {
+    return {
+      engine: 'azure',
+      pronScore: 0, accuracyScore: 0, fluencyScore: 0, completenessScore: 0, prosodyScore: null,
+      recognizedText: '',
+      words: [],
+      raw: { error: 'NoMatch' },
+    };
+  }
+
+  if (result.reason !== SpeechSDK.ResultReason.RecognizedSpeech) {
+    return {
+      engine: 'azure',
+      pronScore: 0, accuracyScore: 0, fluencyScore: 0, completenessScore: 0, prosodyScore: null,
+      recognizedText: '',
+      words: [],
+      raw: { error: `Reason: ${result.reason}` },
+    };
+  }
+
+  const recognizedText = result.text ?? '';
+  const jsonStr = result.properties?.getProperty(
+    SpeechSDK.PropertyId.SpeechServiceResponse_JsonResult
+  ) ?? '';
+
+  let pron = null;
+  let words = [];
+  let raw = {};
+
+  try {
+    raw = JSON.parse(jsonStr);
+    const nbest = raw?.NBest?.[0];
+    if (nbest) {
+      pron = nbest.PronunciationAssessment;
+      words = (nbest.Words ?? []).map(w => ({
+        word: w.Word,
+        accuracyScore: w.PronunciationAssessment?.AccuracyScore ?? 0,
+        errorType: w.PronunciationAssessment?.ErrorType ?? 'None',
+        phonemes: (w.Phonemes ?? []).map(p => ({
+          phoneme: p.Phoneme,
+          accuracyScore: p.PronunciationAssessment?.AccuracyScore ?? 0,
+        })),
+      }));
+    }
+  } catch (e) {
+    console.warn('[AccentNinja] Failed to parse Azure JSON result:', e);
+  }
+
+  return {
+    engine: 'azure',
+    pronScore:         pron?.PronScore          ?? 0,
+    accuracyScore:     pron?.AccuracyScore       ?? 0,
+    fluencyScore:      pron?.FluencyScore        ?? 0,
+    completenessScore: pron?.CompletenessScore   ?? 0,
+    prosodyScore:      pron?.ProsodyScore        ?? null,
+    recognizedText,
+    words,
+    raw,
+  };
+}
+
+// ===========================================================================
+// Web Speech result computation
+// ===========================================================================
+
+function computeWebSpeechResult(referenceText, recognizedText, confidence) {
+  const refWords = normalizeWords(referenceText);
+  const gotWords = normalizeWords(recognizedText ?? '');
+  const conf = Math.max(0, Math.min(1, confidence ?? 0.5));
+
+  const words = [];
+
+  for (let i = 0; i < refWords.length; i++) {
+    const ref = refWords[i];
+    const got = gotWords[i];
+    if (got === undefined) {
+      words.push({ word: ref, accuracyScore: 0, errorType: 'Omission', phonemes: [] });
+    } else if (ref === got) {
+      words.push({ word: ref, accuracyScore: conf * 100, errorType: 'None', phonemes: [] });
+    } else {
+      const sim = stringSimilarity(ref, got);
+      words.push({
+        word: ref,
+        accuracyScore: sim * conf * 100,
+        errorType: sim > 0.6 ? 'Mispronunciation' : 'Omission',
+        phonemes: [],
+      });
+    }
+  }
+
+  // Extra words in recognised text = insertions
+  for (let i = refWords.length; i < gotWords.length; i++) {
+    words.push({ word: gotWords[i], accuracyScore: 0, errorType: 'Insertion', phonemes: [] });
+  }
+
+  const correctCount = words.filter(w => w.errorType === 'None').length;
+  const accuracy = refWords.length > 0 ? (correctCount / refWords.length) * 100 : 0;
+  const completeness = refWords.length > 0
+    ? Math.min(100, (gotWords.length / refWords.length) * 100)
+    : 0;
+
+  // Map confidence to score bands per spec:
+  //   > 0.9 → Excellent (90-100), > 0.7 → Good (70-90), > 0.5 → Needs Work (50-70), ≤ 0.5 → Incorrect
+  let pronScore;
+  if (conf > 0.9)      pronScore = 90 + (conf - 0.9) * 100;
+  else if (conf > 0.7) pronScore = 70 + (conf - 0.7) * 100;
+  else if (conf > 0.5) pronScore = 50 + (conf - 0.5) * 100;
+  else                 pronScore = conf * 100;
+  pronScore = Math.min(100, Math.max(0, pronScore));
+
+  return {
+    engine: 'web',
+    pronScore,
+    accuracyScore:     Math.min(100, Math.max(0, accuracy)),
+    fluencyScore:      Math.min(100, Math.max(45, pronScore + 10)),
+    completenessScore: Math.min(100, Math.max(0, completeness)),
+    prosodyScore: null,
+    recognizedText: recognizedText ?? '',
+    words,
+    raw: { confidence: conf, referenceText, recognizedText },
+  };
+}
+
+// ===========================================================================
+// Factory functions
+// ===========================================================================
+
+export function createTTSEngine(settings) {
+  if (settings.ttsEngine === 'azure' && settings.azureApiKey) {
+    return new AzureTTS(settings);
+  }
+  return new WebSpeechTTS(settings);
+}
+
+export function createAssessmentEngine(settings) {
+  if (settings.assessmentEngine === 'azure' && settings.azureApiKey) {
+    return new AzureAssessmentEngine(settings);
+  }
+  return new WebSpeechAssessmentEngine(settings);
+}
+
+// ===========================================================================
+// Static voice lists
+// ===========================================================================
+
+export const AZURE_VOICES = {
+  us: [
+    { name: 'en-US-JennyNeural',  label: 'Jenny (US, Female)' },
+    { name: 'en-US-GuyNeural',    label: 'Guy (US, Male)' },
+    { name: 'en-US-AriaNeural',   label: 'Aria (US, Female)' },
+    { name: 'en-US-DavisNeural',  label: 'Davis (US, Male)' },
+  ],
+  uk: [
+    { name: 'en-GB-SoniaNeural',  label: 'Sonia (UK, Female)' },
+    { name: 'en-GB-RyanNeural',   label: 'Ryan (UK, Male)' },
+    { name: 'en-GB-LibbyNeural',  label: 'Libby (UK, Female)' },
+    { name: 'en-GB-OliverNeural', label: 'Oliver (UK, Male)' },
+  ],
+};
+
+export const AZURE_REGIONS = [
+  { value: 'eastus',        label: 'East US' },
+  { value: 'eastus2',       label: 'East US 2' },
+  { value: 'westus2',       label: 'West US 2' },
+  { value: 'westus3',       label: 'West US 3' },
+  { value: 'westeurope',    label: 'West Europe' },
+  { value: 'northeurope',   label: 'North Europe' },
+  { value: 'francecentral', label: 'France Central' },
+  { value: 'uksouth',       label: 'UK South' },
+  { value: 'australiaeast', label: 'Australia East' },
+  { value: 'japaneast',     label: 'Japan East' },
+  { value: 'southeastasia', label: 'Southeast Asia' },
+];
