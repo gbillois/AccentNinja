@@ -116,9 +116,15 @@ export class WebSpeechTTS {
       .sort((a, b) => webVoicePriority(a) - webVoicePriority(b));
   }
 
-  async speak(text) {
-    return new Promise((resolve, reject) => {
+  speak(text) {
+    // Only cancel if actually speaking — calling cancel() unconditionally
+    // causes iOS Safari to silently ignore subsequent speak() calls (WebKit bug),
+    // and on Chrome it can drop the utterance if speak() follows immediately.
+    if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
       window.speechSynthesis.cancel();
+    }
+
+    return new Promise((resolve, reject) => {
       const utterance = new SpeechSynthesisUtterance(text);
       const lang = this.settings.accentTarget === 'uk' ? 'en-GB' : 'en-US';
       const voices = this.getAvailableVoices();
@@ -134,8 +140,24 @@ export class WebSpeechTTS {
       utterance.rate = 1.0;
       utterance.pitch = 1.0;
       utterance.volume = 1.0;
-      utterance.onend = resolve;
-      utterance.onerror = e => reject(new Error(`TTS error: ${e.error}`));
+
+      // Safety timeout: some browsers never fire onend/onerror
+      const SAFETY_TIMEOUT_MS = 30000;
+      const safetyTimer = setTimeout(() => {
+        this._utterance = null;
+        resolve();
+      }, SAFETY_TIMEOUT_MS);
+
+      utterance.onend = () => {
+        clearTimeout(safetyTimer);
+        resolve();
+      };
+      utterance.onerror = e => {
+        clearTimeout(safetyTimer);
+        // iOS Safari fires 'interrupted' when cancel() is called — not a real error
+        if (e.error === 'interrupted') { resolve(); return; }
+        reject(new Error(`TTS error: ${e.error}`));
+      };
 
       this._utterance = utterance;
       window.speechSynthesis.speak(utterance);
