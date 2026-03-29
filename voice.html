@@ -13,11 +13,29 @@
     input, textarea, select, button { width: 100%; box-sizing: border-box; font: inherit; padding: .6rem; margin-top: .25rem; border: 1px solid #cbd5e1; border-radius: 8px; }
     textarea { min-height: 90px; }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
-    .actions { display: flex; gap: .75rem; }
-    .actions button { width: auto; min-width: 150px; cursor: pointer; }
-    .status { font-weight: 600; margin: .5rem 0; }
-    .scores { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: .5rem; }
+    .actions { display: flex; gap: .75rem; flex-wrap: wrap; }
+    .actions button { width: auto; min-width: 170px; cursor: pointer; }
+    #stopBtn { background: #fff1f2; border-color: #fda4af; color: #9f1239; }
+    #stopBtn:disabled { opacity: .6; cursor: not-allowed; }
+    .status-row { display: flex; align-items: center; gap: .65rem; margin-top: .75rem; }
+    .status { font-weight: 600; margin: 0; }
+    .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid #cbd5e1;
+      border-top-color: #2563eb;
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+      display: none;
+      flex-shrink: 0;
+    }
+    .spinner.visible { display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .scores { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: .5rem; margin-bottom: .75rem; }
     .score { border: 1px solid #e5e7eb; border-radius: 10px; padding: .75rem; background: #f8fafc; }
+    .score-value { font-size: 1.2rem; font-weight: 700; color: #0f172a; }
+    .chart-wrap { border: 1px solid #e5e7eb; border-radius: 12px; padding: .75rem; background: linear-gradient(180deg, #ffffff, #f8fafc); }
+    #scoreChart { width: 100%; height: 260px; display: block; }
     pre { white-space: pre-wrap; background: #0b1020; color: #d1e7ff; padding: .8rem; border-radius: 10px; overflow-x: auto; }
     .muted { color: #6b7280; font-size: .92rem; }
   </style>
@@ -35,7 +53,7 @@
     <div class="row">
       <div>
         <label for="speechRegion">Speech Region</label>
-        <input id="speechRegion" type="text" value="eastus" placeholder="e.g. eastus" />
+        <input id="speechRegion" type="text" value="westeurope" placeholder="e.g. westeurope" />
       </div>
       <div>
         <label for="locale">Learning locale</label>
@@ -69,13 +87,21 @@
 
     <div class="actions" style="margin-top: 1rem;">
       <button id="startBtn">🎤 Start recording + assess</button>
+      <button id="stopBtn" disabled>⏹️ Stop recording</button>
     </div>
-    <p id="status" class="status">Idle</p>
+
+    <div class="status-row">
+      <span id="spinner" class="spinner" aria-hidden="true"></span>
+      <p id="status" class="status">Idle</p>
+    </div>
   </div>
 
   <div class="card">
     <h2>3) Feedback</h2>
     <div id="scores" class="scores"></div>
+    <div class="chart-wrap">
+      <canvas id="scoreChart" width="840" height="260" aria-label="Pronunciation score chart" role="img"></canvas>
+    </div>
     <h3>Recognized text</h3>
     <pre id="recognizedText">(none)</pre>
     <h3>Raw JSON result</h3>
@@ -85,6 +111,7 @@
   <script>
     const $ = (id) => document.getElementById(id);
     const fieldsToPersist = ["speechRegion", "locale", "referenceText", "gradingSystem", "granularity"];
+    let activeRecognizer = null;
 
     function loadSavedValues() {
       fieldsToPersist.forEach((id) => {
@@ -103,18 +130,142 @@
       status.style.color = isError ? "#b91c1c" : "#111827";
     }
 
-    function renderScores(pa) {
-      const scores = [
+    function setBusy(isBusy) {
+      $("spinner").classList.toggle("visible", isBusy);
+    }
+
+    function getScoreItems(pa) {
+      return [
         ["Pronunciation", pa?.PronScore],
         ["Accuracy", pa?.AccuracyScore],
         ["Fluency", pa?.FluencyScore],
         ["Completeness", pa?.CompletenessScore],
         ["Prosody", pa?.ProsodyScore]
-      ];
+      ].filter(([, v]) => v !== undefined && Number.isFinite(Number(v)));
+    }
+
+    function renderScores(pa) {
+      const scores = getScoreItems(pa);
       $("scores").innerHTML = scores
-        .filter(([, v]) => v !== undefined)
-        .map(([k, v]) => `<div class="score"><strong>${k}</strong><div>${Number(v).toFixed(2)}</div></div>`)
+        .map(([k, v]) => `<div class="score"><strong>${k}</strong><div class="score-value">${Number(v).toFixed(2)}</div></div>`)
         .join("");
+      drawScoreChart(scores);
+    }
+
+    function drawRoundedRect(ctx, x, y, width, height, radius) {
+      const r = Math.min(radius, width / 2, height / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + width - r, y);
+      ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+      ctx.lineTo(x + width, y + height - r);
+      ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+      ctx.lineTo(x + r, y + height);
+      ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    function drawScoreChart(items) {
+      const canvas = $("scoreChart");
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      ctx.fillStyle = "#f8fafc";
+      ctx.fillRect(0, 0, w, h);
+
+      if (!items.length) {
+        ctx.fillStyle = "#64748b";
+        ctx.font = "16px Inter, sans-serif";
+        ctx.fillText("Your score chart will appear after assessment.", 24, 40);
+        return;
+      }
+
+      const maxScore = $("gradingSystem").value === "FivePoint" ? 5 : 100;
+      const left = 68;
+      const right = 28;
+      const top = 24;
+      const bottom = 45;
+      const chartW = w - left - right;
+      const chartH = h - top - bottom;
+
+      ctx.strokeStyle = "#cbd5e1";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 0; i <= 5; i++) {
+        const y = top + (chartH / 5) * i;
+        ctx.moveTo(left, y);
+        ctx.lineTo(left + chartW, y);
+      }
+      ctx.stroke();
+
+      ctx.fillStyle = "#475569";
+      ctx.font = "12px Inter, sans-serif";
+      for (let i = 0; i <= 5; i++) {
+        const value = ((maxScore / 5) * (5 - i)).toFixed(maxScore === 5 ? 1 : 0);
+        const y = top + (chartH / 5) * i;
+        ctx.fillText(value, 24, y + 4);
+      }
+
+      const barGap = 16;
+      const barW = (chartW - (items.length + 1) * barGap) / items.length;
+
+      items.forEach(([label, raw], index) => {
+        const value = Number(raw);
+        const ratio = Math.max(0, Math.min(1, value / maxScore));
+        const barH = ratio * chartH;
+        const x = left + barGap + index * (barW + barGap);
+        const y = top + chartH - barH;
+
+        const gradient = ctx.createLinearGradient(x, y, x, y + barH);
+        gradient.addColorStop(0, "#2563eb");
+        gradient.addColorStop(1, "#38bdf8");
+        ctx.fillStyle = gradient;
+        drawRoundedRect(ctx, x, y, barW, barH, 8);
+        ctx.fill();
+
+        ctx.fillStyle = "#0f172a";
+        ctx.font = "13px Inter, sans-serif";
+        ctx.fillText(value.toFixed(2), x + 8, y - 8);
+
+        ctx.fillStyle = "#334155";
+        ctx.font = "12px Inter, sans-serif";
+        ctx.fillText(label, x + 2, h - 16);
+      });
+    }
+
+    function resetUiForStart() {
+      $("startBtn").disabled = true;
+      $("stopBtn").disabled = false;
+      $("recognizedText").textContent = "(waiting...)";
+      $("rawJson").textContent = "(waiting...)";
+      $("scores").innerHTML = "";
+      drawScoreChart([]);
+    }
+
+    function finalizeUi() {
+      $("startBtn").disabled = false;
+      $("stopBtn").disabled = true;
+      setBusy(false);
+      activeRecognizer = null;
+    }
+
+    function stopRecording() {
+      if (!activeRecognizer) return;
+      setStatus("Stopping recording and waiting for results...");
+      setBusy(true);
+      activeRecognizer.stopContinuousRecognitionAsync(
+        () => {
+          // Session stopped event finalizes UI.
+        },
+        (err) => {
+          setStatus(`Stop error: ${err}`, true);
+          finalizeUi();
+        }
+      );
     }
 
     async function runAssessment() {
@@ -132,10 +283,8 @@
 
       saveValues();
       setStatus("Requesting microphone access...");
-      $("startBtn").disabled = true;
-      $("recognizedText").textContent = "(waiting...)";
-      $("rawJson").textContent = "(waiting...)";
-      $("scores").innerHTML = "";
+      setBusy(true);
+      resetUiForStart();
 
       try {
         const sdk = window.SpeechSDK;
@@ -143,9 +292,11 @@
 
         const speechConfig = sdk.SpeechConfig.fromSubscription(speechKey, speechRegion);
         speechConfig.speechRecognitionLanguage = locale;
+        speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "1300");
 
         const audioConfig = sdk.AudioConfig.fromDefaultMicrophoneInput();
         const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
+        activeRecognizer = recognizer;
 
         const pronConfig = new sdk.PronunciationAssessmentConfig(
           referenceText,
@@ -156,48 +307,58 @@
         pronConfig.enableProsodyAssessment = true;
         pronConfig.applyTo(recognizer);
 
-        setStatus("Listening... Speak now.");
+        recognizer.recognized = (_sender, event) => {
+          try {
+            const result = event.result;
+            const jsonResult = result.properties.getProperty(sdk.PropertyId.SpeechServiceResponse_JsonResult);
+            $("recognizedText").textContent = result.text || "(no text)";
+            $("rawJson").textContent = jsonResult || "(no JSON result)";
 
-        recognizer.recognizeOnceAsync(
-          (result) => {
-            try {
-              const jsonResult = result.properties.getProperty(sdk.PropertyId.SpeechServiceResponse_JsonResult);
-              $("recognizedText").textContent = result.text || "(no text)";
-              $("rawJson").textContent = jsonResult || "(no JSON result)";
-
-              if (jsonResult) {
-                const parsed = JSON.parse(jsonResult);
-                const nbest0 = parsed?.NBest?.[0];
-                const pa = nbest0?.PronunciationAssessment;
-                renderScores(pa);
-              }
-
-              if (result.reason === sdk.ResultReason.RecognizedSpeech) {
-                setStatus("Assessment completed.");
-              } else {
-                setStatus(`Completed with reason: ${result.reason}.`, true);
-              }
-            } catch (innerErr) {
-              setStatus(`Failed to parse assessment result: ${innerErr.message}`, true);
-            } finally {
-              recognizer.close();
-              $("startBtn").disabled = false;
+            if (jsonResult) {
+              const parsed = JSON.parse(jsonResult);
+              const nbest0 = parsed?.NBest?.[0];
+              renderScores(nbest0?.PronunciationAssessment);
             }
-          },
+
+            if (result.reason === sdk.ResultReason.RecognizedSpeech) {
+              setStatus("Assessment completed.");
+            } else {
+              setStatus(`Completed with reason: ${result.reason}.`, true);
+            }
+          } catch (innerErr) {
+            setStatus(`Failed to parse assessment result: ${innerErr.message}`, true);
+          }
+        };
+
+        recognizer.canceled = (_sender, event) => {
+          setStatus(`Recognition canceled: ${event.errorDetails || event.reason}`, true);
+        };
+
+        recognizer.sessionStopped = () => {
+          recognizer.close();
+          finalizeUi();
+        };
+
+        setStatus("Listening... Speak now. (Auto-stop on silence or press Stop)");
+        recognizer.startContinuousRecognitionAsync(
+          () => {},
           (err) => {
             setStatus(`Recognition error: ${err}`, true);
             recognizer.close();
-            $("startBtn").disabled = false;
+            finalizeUi();
           }
         );
       } catch (err) {
         setStatus(`Setup error: ${err.message}`, true);
-        $("startBtn").disabled = false;
+        finalizeUi();
       }
     }
 
     $("startBtn").addEventListener("click", runAssessment);
+    $("stopBtn").addEventListener("click", stopRecording);
+    $("gradingSystem").addEventListener("change", () => drawScoreChart(getScoreItems({})));
     loadSavedValues();
+    drawScoreChart([]);
   </script>
 </body>
 </html>
