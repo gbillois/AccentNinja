@@ -98,6 +98,26 @@ function playSliceImpact(audioCtx) {
   } catch (_) {}
 }
 
+// Metallic ring — resonant blade shimmer after impact
+function playMetalShing(audioCtx) {
+  try {
+    const t = audioCtx.currentTime;
+    [3200, 5400, 8100].forEach((freq, i) => {
+      const osc  = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, t + i * 0.005);
+      gain.gain.linearRampToValueAtTime(0.15 - i * 0.04, t + i * 0.005 + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35 - i * 0.05);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(t + i * 0.005);
+      osc.stop(t + 0.4);
+    });
+  } catch (_) {}
+}
+
 function playThud(audioCtx) {
   try {
     const osc  = audioCtx.createOscillator();
@@ -202,6 +222,39 @@ function spawnParticles(count, cx, cy, color) {
     anim.onfinish = () => el.remove();
   }
   return elements;
+}
+
+// Bright metallic sparkles — 4-pointed star shapes
+function spawnSparkles(count, cx, cy) {
+  for (let i = 0; i < count; i++) {
+    const el  = document.createElement('div');
+    const sz  = 5 + Math.random() * 9;
+    const col = Math.random() > 0.4 ? '#ffffff' : (Math.random() > 0.5 ? '#c8d4f0' : '#e0e8ff');
+    el.style.cssText = `
+      position: fixed;
+      left: ${cx}px;
+      top: ${cy}px;
+      width: ${sz}px;
+      height: ${sz}px;
+      background: ${col};
+      clip-path: polygon(50% 0%, 58% 40%, 100% 50%, 58% 60%, 50% 100%, 42% 60%, 0% 50%, 42% 40%);
+      pointer-events: none;
+      z-index: 212;
+      box-shadow: 0 0 4px ${col};
+    `;
+    document.body.appendChild(el);
+    const angle = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+    const dist  = 25 + Math.random() * 80;
+    const dx    = Math.cos(angle) * dist;
+    const dy    = Math.sin(angle) * dist + dist * 0.2;
+    const rot   = (Math.random() - 0.5) * 540;
+    const dur   = 300 + Math.random() * 200;
+    el.animate([
+      { transform: `translate(0,0) rotate(0deg) scale(1)`, opacity: 1 },
+      { transform: `translate(${dx * 0.5}px,${dy * 0.4}px) rotate(${rot * 0.5}deg) scale(1.2)`, opacity: 1, offset: 0.25 },
+      { transform: `translate(${dx}px,${dy}px) rotate(${rot}deg) scale(0)`, opacity: 0 },
+    ], { duration: dur, easing: 'ease-out', fill: 'forwards' }).onfinish = () => el.remove();
+  }
 }
 
 // Expanding ring "juice splatter" at impact point
@@ -472,7 +525,11 @@ export function playNinjaAnimation(container, result, options = {}) {
       transform: translateY(${window.innerHeight + 80}px) translateX(-50%) rotate(${startRot}deg);
       font-family: 'Dela Gothic One', cursive;
       font-size: ${fontSize};
-      color: ${C.text};
+      color: #b8bec8;
+      text-shadow:
+        0 1px 0 rgba(255,255,255,0.45),
+        0 -1px 0 rgba(0,0,0,0.35),
+        0 0 10px rgba(180,195,225,0.4);
       z-index: 203;
       pointer-events: none;
       white-space: nowrap;
@@ -507,69 +564,111 @@ export function playNinjaAnimation(container, result, options = {}) {
       const cx   = rect.left + rect.width / 2;
       const cy   = rect.top  + rect.height / 2;
 
-      // Immediate screen flash on impact
-      flashScreen(C.gold, 0.2, 90);
+      // Immediate screen flash — white like a blade catching light
+      flashScreen('#e8f0ff', 0.28, 80);
 
-      // Double-line SVG slash (gold main + white core)
-      const svgNS = 'http://www.w3.org/2000/svg';
-      const svgEl = document.createElementNS(svgNS, 'svg');
-      const sw    = rect.width + 28;
-      const sh    = rect.height + 16;
-      svgEl.setAttribute('width',  sw);
-      svgEl.setAttribute('height', sh);
-      svgEl.style.cssText = `
+      // Metallic blade SVG sweeping through the word
+      const svgNS    = 'http://www.w3.org/2000/svg';
+      const sw       = rect.width + 32;
+      const sh       = rect.height + 20;
+      const slashDuration = isSingle ? 160 : 110;
+
+      // Wrapper div clips the SVG as it sweeps in
+      const bladeWrapper = document.createElement('div');
+      bladeWrapper.style.cssText = `
         position: fixed;
-        left: ${rect.left - 14}px;
-        top:  ${rect.top  - 8}px;
+        left: ${rect.left - 16}px;
+        top:  ${rect.top  - 10}px;
+        width: ${sw}px;
+        height: ${sh}px;
+        overflow: hidden;
         z-index: 204;
         pointer-events: none;
-        filter: drop-shadow(0 0 18px ${C.gold}) drop-shadow(0 0 6px #fff8);
+        filter: drop-shadow(0 0 14px rgba(200,220,255,0.9))
+                drop-shadow(0 0 5px rgba(255,255,255,0.95));
       `;
+      overlay.appendChild(bladeWrapper);
 
-      const variant = slashVariant % 2;
+      const svgEl = document.createElementNS(svgNS, 'svg');
+      svgEl.setAttribute('width', sw);
+      svgEl.setAttribute('height', sh);
+      svgEl.style.cssText = `position: absolute; left: 0; top: 0; overflow: visible;`;
+      bladeWrapper.appendChild(svgEl);
+
+      const variant  = slashVariant % 2;
       slashVariant++;
-      const getD = (v) => v === 0
-        ? `M 0,5 Q ${sw * 0.4},${sh * 0.5} ${sw},${sh - 5}`
-        : `M ${sw},5 Q ${sw * 0.6},${sh * 0.5} 0,${sh - 5}`;
+      const gradId   = `bg${Date.now()}`;
 
-      const mainPath = document.createElementNS(svgNS, 'path');
-      mainPath.setAttribute('d', getD(variant));
-      mainPath.setAttribute('fill', 'none');
-      mainPath.setAttribute('stroke', C.gold);
-      mainPath.setAttribute('stroke-width', '4.5');
-      mainPath.setAttribute('stroke-linecap', 'round');
-
-      const corePath = document.createElementNS(svgNS, 'path');
-      corePath.setAttribute('d', getD(variant));
-      corePath.setAttribute('fill', 'none');
-      corePath.setAttribute('stroke', '#ffffff');
-      corePath.setAttribute('stroke-width', '1.5');
-      corePath.setAttribute('stroke-linecap', 'round');
-
-      svgEl.appendChild(mainPath);
-      svgEl.appendChild(corePath);
-      overlay.appendChild(svgEl);
-
-      const pathLen = mainPath.getTotalLength ? mainPath.getTotalLength() : 130;
-      [mainPath, corePath].forEach(p => {
-        p.style.strokeDasharray  = pathLen;
-        p.style.strokeDashoffset = pathLen;
+      // Metallic gradient (dark→silver→bright→silver→dark, vertical)
+      const defs = document.createElementNS(svgNS, 'defs');
+      const grad = document.createElementNS(svgNS, 'linearGradient');
+      grad.setAttribute('id', gradId);
+      grad.setAttribute('x1', '0'); grad.setAttribute('y1', '0');
+      grad.setAttribute('x2', '0'); grad.setAttribute('y2', '1');
+      [
+        ['0%',   '#304050', '1'],
+        ['20%',  '#7888a0', '1'],
+        ['38%',  '#c8d4e8', '1'],
+        ['50%',  '#f4f8ff', '1'],  // bright edge
+        ['62%',  '#b0bcd0', '1'],
+        ['80%',  '#606878', '1'],
+        ['100%', '#202830', '1'],
+      ].forEach(([off, col, op]) => {
+        const s = document.createElementNS(svgNS, 'stop');
+        s.setAttribute('offset', off);
+        s.setAttribute('stop-color', col);
+        s.setAttribute('stop-opacity', op);
+        grad.appendChild(s);
       });
+      defs.appendChild(grad);
+      svgEl.appendChild(defs);
 
-      const slashDuration = isSingle ? 170 : 120;
-      mainPath.animate([
-        { strokeDashoffset: pathLen },
-        { strokeDashoffset: 0 },
-      ], { duration: slashDuration, easing: 'ease-out', fill: 'forwards' });
-      corePath.animate([
-        { strokeDashoffset: pathLen },
-        { strokeDashoffset: 0 },
-      ], { duration: Math.round(slashDuration * 0.8), easing: 'ease-out', fill: 'forwards' });
+      // Blade shape — leaf/blade cross-section, tip pointing in slash direction
+      const bh = sh * 0.38;  // half blade thickness
+      let bodyD, edgeD;
+      if (variant === 0) {
+        // Tip points right
+        bodyD = `M 0,${sh*0.5} L ${sw*0.04},${sh*0.5-bh*0.55} Q ${sw*0.45},${sh*0.5-bh} ${sw*0.9},${sh*0.5-bh*0.45} L ${sw},${sh*0.5} L ${sw*0.9},${sh*0.5+bh*0.45} Q ${sw*0.45},${sh*0.5+bh} ${sw*0.04},${sh*0.5+bh*0.55} Z`;
+        edgeD = `M 0,${sh*0.5} L ${sw*0.04},${sh*0.5-bh*0.55} Q ${sw*0.45},${sh*0.5-bh} ${sw*0.9},${sh*0.5-bh*0.45} L ${sw},${sh*0.5}`;
+      } else {
+        // Tip points left
+        bodyD = `M ${sw},${sh*0.5} L ${sw*0.96},${sh*0.5-bh*0.55} Q ${sw*0.55},${sh*0.5-bh} ${sw*0.1},${sh*0.5-bh*0.45} L 0,${sh*0.5} L ${sw*0.1},${sh*0.5+bh*0.45} Q ${sw*0.55},${sh*0.5+bh} ${sw*0.96},${sh*0.5+bh*0.55} Z`;
+        edgeD = `M ${sw},${sh*0.5} L ${sw*0.96},${sh*0.5-bh*0.55} Q ${sw*0.55},${sh*0.5-bh} ${sw*0.1},${sh*0.5-bh*0.45} L 0,${sh*0.5}`;
+      }
+
+      const bladeBody = document.createElementNS(svgNS, 'path');
+      bladeBody.setAttribute('d', bodyD);
+      bladeBody.setAttribute('fill', `url(#${gradId})`);
+      bladeBody.setAttribute('opacity', '0.92');
+      svgEl.appendChild(bladeBody);
+
+      // Bright edge highlight (the cutting edge)
+      const bladeEdge = document.createElementNS(svgNS, 'path');
+      bladeEdge.setAttribute('d', edgeD);
+      bladeEdge.setAttribute('fill', 'none');
+      bladeEdge.setAttribute('stroke', '#ffffff');
+      bladeEdge.setAttribute('stroke-width', '1.5');
+      bladeEdge.setAttribute('stroke-linecap', 'round');
+      bladeEdge.setAttribute('opacity', '0.95');
+      svgEl.appendChild(bladeEdge);
+
+      // Slide blade across — enter from the side, clip reveals it sweeping through
+      const startX = variant === 0 ? -sw : sw;
+      svgEl.animate([
+        { transform: `translateX(${startX}px)` },
+        { transform: 'translateX(0px)' },
+      ], { duration: slashDuration, easing: 'cubic-bezier(0.1, 0.7, 0.3, 1)', fill: 'forwards' });
 
       await delay(slashDuration);
 
-      // Juice splatter ring at impact point
-      spawnJuiceSplatter(cx, cy, C.gold);
+      // Metallic ring sound — steel shimmer
+      playMetalShing(audioCtx);
+
+      // Juice splatter ring — silver/chrome
+      spawnJuiceSplatter(cx, cy, '#c0ccd8');
+
+      // Star sparkles flying off the cut
+      spawnSparkles(12, cx, cy);
 
       // Hide original, spawn halves that arc out then fall with gravity
       wordEl.style.visibility = 'hidden';
@@ -646,21 +745,25 @@ export function playNinjaAnimation(container, result, options = {}) {
 
       // Combo labels
       if (consecutiveCorrect === 3) {
-        showComboLabel('3× CHAIN', C.gold, '26px', false);
+        showComboLabel('3× CHAIN', '#c0ccd8', '26px', false);
         shakeScreen(4);
-        flashScreen(C.gold, 0.12, 160);
+        flashScreen('#c8d8f0', 0.15, 160);
       } else if (consecutiveCorrect === 5) {
-        showComboLabel('5× SHARP', C.goldBright, '30px', false);
+        showComboLabel('5× SHARP', '#e8f0ff', '30px', false);
         shakeScreen(6);
-        flashScreen(C.goldBright, 0.16, 180);
+        flashScreen('#ffffff', 0.2, 160);
       } else if (consecutiveCorrect >= 7) {
         showComboLabel('FLAWLESS', null, '36px', true);
         shakeScreen(8);
-        flashScreen(C.goldBright, 0.22, 220);
+        flashScreen('#ffffff', 0.28, 200);
         spawnFallingParticles(20, 0);
       }
 
-      setTimeout(() => svgEl.remove(), 700);
+      // Fade out blade wrapper
+      bladeWrapper.animate([
+        { opacity: 1 },
+        { opacity: 0 },
+      ], { duration: 200, delay: 120, easing: 'ease-out', fill: 'forwards' }).onfinish = () => bladeWrapper.remove();
       setTimeout(() => wordEl.remove(), 750);
 
     } else {
@@ -668,9 +771,11 @@ export function playNinjaAnimation(container, result, options = {}) {
 
       // Quick color shift to red
       wordEl.animate([
-        { color: C.text },
+        { color: '#b8bec8' },
         { color: C.red },
       ], { duration: 140, easing: 'linear', fill: 'forwards' });
+      // Kill metallic text-shadow so red reads clearly
+      setTimeout(() => { wordEl.style.textShadow = 'none'; }, 80);
 
       // Wobble — word shakes as if trying to dodge the blade
       await wordEl.animate([
