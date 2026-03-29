@@ -6,6 +6,7 @@
 import { createTTSEngine, createAssessmentEngine, AZURE_VOICES, AZURE_REGIONS, webVoicePriority } from './engines.js';
 import { t, setLanguage } from './i18n.js';
 import { CORPUS } from './corpus.js';
+import { playNinjaAnimation } from './ninja.js';
 
 // ===========================================================================
 // Constants
@@ -24,6 +25,7 @@ const DEFAULT_SETTINGS = {
   language:         'fr',
   theme:            'dark',
   firstLaunch:      true,
+  resultsDisplay:   'ninja',   // 'ninja' | 'classic'
 };
 
 // ===========================================================================
@@ -35,6 +37,7 @@ const state = {
   engines:  { tts: null, assessment: null },
   screen:   'splash',
   db:       null,
+  audioCtx: null,   // shared Web Audio context for Ninja Mode
 };
 
 // Transient "pending" settings in the Settings UI (not yet saved to DB).
@@ -546,6 +549,59 @@ function resetPractice() {
 }
 
 function showResults(result) {
+  // Dispatch to Ninja Mode if enabled
+  if (state.settings.resultsDisplay === 'ninja') {
+    showNinjaResults(result);
+    return;
+  }
+  showClassicResults(result);
+}
+
+function showNinjaResults(result) {
+  // Lazily create / resume a shared AudioContext (requires user gesture — already satisfied by record tap)
+  if (!state.audioCtx) {
+    try { state.audioCtx = new AudioContext(); } catch (_) {}
+  }
+  if (state.audioCtx?.state === 'suspended') state.audioCtx.resume().catch(() => {});
+
+  const container = document.getElementById('screen-practice');
+  const phrase    = document.getElementById('phrase-input')?.value?.trim() ?? practiceState.phrase;
+
+  // Build TTS callbacks
+  function onListen() {
+    state.engines.tts?.speak(phrase).catch(() => {});
+  }
+  function onListenSlow() {
+    // Use Web Speech API directly at 0.7x if available, else fall back to normal
+    if (window.speechSynthesis && state.settings.ttsEngine === 'web') {
+      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+        window.speechSynthesis.cancel();
+      }
+      const utt  = new SpeechSynthesisUtterance(phrase);
+      const lang = state.settings.accentTarget === 'uk' ? 'en-GB' : 'en-US';
+      const voices = window.speechSynthesis.getVoices().filter(v => v.lang.startsWith(lang));
+      if (voices.length) utt.voice = voices[0];
+      utt.lang  = lang;
+      utt.rate  = 0.7;
+      window.speechSynthesis.speak(utt);
+    } else {
+      state.engines.tts?.speak(phrase).catch(() => {});
+    }
+  }
+
+  playNinjaAnimation(container, result, {
+    audioCtx:      state.audioCtx,
+    phrase,
+    recordingBlob: practiceState.recordingBlob,
+    onListen,
+    onListenSlow,
+    onRetry:       resetPractice,
+    onNext:        () => navigate('home'),
+    onComplete:    () => {},
+  });
+}
+
+function showClassicResults(result) {
   const resultsEl = document.getElementById('p-results');
   if (!resultsEl) return;
   resultsEl.classList.remove('hidden');
@@ -774,6 +830,21 @@ function renderSettingsScreen() {
             </div>
           </section>
 
+          <!-- Results Display -->
+          <section class="settings-section">
+            <p class="settings-section-title">Affichage des résultats / Results Animation</p>
+            <div class="toggle-group" id="results-display-toggle" role="group" aria-label="Results Animation">
+              <button class="toggle-option ${s.resultsDisplay === 'classic' ? 'active' : ''}"
+                      data-value="classic" type="button">
+                Classic
+              </button>
+              <button class="toggle-option ${s.resultsDisplay !== 'classic' ? 'active' : ''}"
+                      data-value="ninja" type="button">
+                Ninja
+              </button>
+            </div>
+          </section>
+
           <!-- Save button -->
           <div style="padding: var(--space-6) 0 var(--space-4)">
             <button class="btn btn-primary btn-full" id="save-settings-btn" type="button">
@@ -815,6 +886,11 @@ function attachSettingsEvents() {
   wireToggleGroup('accent-toggle', value => {
     pendingSettings.accentTarget = value;
     populateVoiceList();
+  });
+
+  // Results display toggle
+  wireToggleGroup('results-display-toggle', value => {
+    pendingSettings.resultsDisplay = value;
   });
 
   // Live-update pending settings from text inputs / selects
