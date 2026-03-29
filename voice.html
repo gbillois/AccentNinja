@@ -38,6 +38,8 @@
     #scoreChart { width: 100%; height: 260px; display: block; }
     pre { white-space: pre-wrap; background: #0b1020; color: #d1e7ff; padding: .8rem; border-radius: 10px; overflow-x: auto; }
     .muted { color: #6b7280; font-size: .92rem; }
+    .small-actions { margin-top: .75rem; display: flex; gap: .5rem; flex-wrap: wrap; }
+    .small-actions button { width: auto; min-width: 0; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/microsoft-cognitiveservices-speech-sdk@latest/distrib/browser/microsoft.cognitiveservices.speech.sdk.bundle-min.js"></script>
 </head>
@@ -49,6 +51,14 @@
     <h2>1) Azure Credentials</h2>
     <label for="speechKey">Speech API Key</label>
     <input id="speechKey" type="password" placeholder="Paste your Azure Speech key" autocomplete="off" />
+    <label for="keyPassphrase">Passphrase for local key vault</label>
+    <input id="keyPassphrase" type="password" placeholder="Create or enter a passphrase" autocomplete="off" />
+    <div class="small-actions">
+      <button id="saveKeyBtn" type="button">💾 Save API key securely</button>
+      <button id="loadKeyBtn" type="button">🔐 Load saved API key</button>
+      <button id="forgetKeyBtn" type="button">🗑️ Forget saved API key</button>
+    </div>
+    <p class="muted">Your API key is encrypted with your passphrase using Web Crypto before it is stored in this browser.</p>
 
     <div class="row">
       <div>
@@ -112,6 +122,62 @@
     const $ = (id) => document.getElementById(id);
     const fieldsToPersist = ["speechRegion", "locale", "referenceText", "gradingSystem", "granularity"];
     let activeRecognizer = null;
+    const savedKeyStorageKey = "accentninja_secure_speech_key_v1";
+
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+
+    function toBase64(bytes) {
+      let binary = "";
+      bytes.forEach((b) => (binary += String.fromCharCode(b)));
+      return btoa(binary);
+    }
+
+    function fromBase64(base64) {
+      return Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+    }
+
+    async function deriveVaultKey(passphrase, salt) {
+      const keyMaterial = await crypto.subtle.importKey(
+        "raw",
+        encoder.encode(passphrase),
+        "PBKDF2",
+        false,
+        ["deriveKey"]
+      );
+
+      return crypto.subtle.deriveKey(
+        { name: "PBKDF2", salt, iterations: 250000, hash: "SHA-256" },
+        keyMaterial,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["encrypt", "decrypt"]
+      );
+    }
+
+    async function encryptSecret(secret, passphrase) {
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const key = await deriveVaultKey(passphrase, salt);
+      const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoder.encode(secret));
+
+      return JSON.stringify({
+        v: 1,
+        salt: toBase64(salt),
+        iv: toBase64(iv),
+        data: toBase64(new Uint8Array(encrypted))
+      });
+    }
+
+    async function decryptSecret(payload, passphrase) {
+      const parsed = JSON.parse(payload);
+      const salt = fromBase64(parsed.salt);
+      const iv = fromBase64(parsed.iv);
+      const data = fromBase64(parsed.data);
+      const key = await deriveVaultKey(passphrase, salt);
+      const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data);
+      return decoder.decode(decrypted);
+    }
 
     function loadSavedValues() {
       fieldsToPersist.forEach((id) => {
@@ -122,6 +188,56 @@
 
     function saveValues() {
       fieldsToPersist.forEach((id) => localStorage.setItem(`accentninja_${id}`, $(id).value));
+    }
+
+    async function saveApiKeySecurely() {
+      const speechKey = $("speechKey").value.trim();
+      const passphrase = $("keyPassphrase").value;
+
+      if (!speechKey) {
+        setStatus("Enter an API key first.", true);
+        return;
+      }
+      if (!passphrase || passphrase.length < 8) {
+        setStatus("Use a passphrase with at least 8 characters.", true);
+        return;
+      }
+
+      try {
+        const encryptedPayload = await encryptSecret(speechKey, passphrase);
+        localStorage.setItem(savedKeyStorageKey, encryptedPayload);
+        $("speechKey").value = "";
+        setStatus("API key encrypted and saved locally.");
+      } catch (err) {
+        setStatus(`Unable to save key securely: ${err.message}`, true);
+      }
+    }
+
+    async function loadApiKeySecurely() {
+      const passphrase = $("keyPassphrase").value;
+      const payload = localStorage.getItem(savedKeyStorageKey);
+
+      if (!payload) {
+        setStatus("No saved API key was found.", true);
+        return;
+      }
+      if (!passphrase) {
+        setStatus("Enter your passphrase to unlock the saved API key.", true);
+        return;
+      }
+
+      try {
+        const decrypted = await decryptSecret(payload, passphrase);
+        $("speechKey").value = decrypted;
+        setStatus("Saved API key loaded into the form.");
+      } catch (_err) {
+        setStatus("Could not decrypt saved key. Check your passphrase.", true);
+      }
+    }
+
+    function forgetSavedApiKey() {
+      localStorage.removeItem(savedKeyStorageKey);
+      setStatus("Saved API key removed from local storage.");
     }
 
     function setStatus(text, isError = false) {
@@ -356,6 +472,9 @@
 
     $("startBtn").addEventListener("click", runAssessment);
     $("stopBtn").addEventListener("click", stopRecording);
+    $("saveKeyBtn").addEventListener("click", saveApiKeySecurely);
+    $("loadKeyBtn").addEventListener("click", loadApiKeySecurely);
+    $("forgetKeyBtn").addEventListener("click", forgetSavedApiKey);
     $("gradingSystem").addEventListener("change", () => drawScoreChart(getScoreItems({})));
     loadSavedValues();
     drawScoreChart([]);
