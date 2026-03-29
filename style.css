@@ -731,10 +731,293 @@ input, select, textarea { font: inherit; color: inherit; }
 .connection-status--fail { color: var(--color-error); }
 
 /* ===========================================================================
-   14. Practice Screen (stub — expanded in Part 2)
+   12b. Level-0 card on Home screen
    =========================================================================== */
 
-.practice-main,
+.level0-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  background: linear-gradient(135deg, var(--color-primary-dim) 0%, var(--color-surface) 100%);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-xl);
+  padding: var(--space-4) var(--space-5);
+  cursor: pointer;
+  text-align: left;
+  transition: filter var(--transition-fast), transform var(--transition-fast);
+}
+.level0-card:hover  { filter: brightness(1.1); }
+.level0-card:active { transform: scale(0.98); }
+
+.level0-icon { font-size: 28px; flex-shrink: 0; }
+
+.level0-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.level0-title {
+  font-size: var(--text-base);
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.level0-sub {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.level0-arrow {
+  font-size: var(--text-xl);
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+/* ===========================================================================
+   14. Practice Screen — Level 0 sandbox
+   =========================================================================== */
+
+.practice-l0 {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-4) var(--space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* Section header label */
+.p-section { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.p-label {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  color: var(--color-text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* Phrase textarea */
+.p-textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  color: var(--color-text);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  resize: vertical;
+  transition: border-color var(--transition-fast);
+}
+.p-textarea:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+  outline: none;
+}
+
+/* Listen button — full width secondary */
+.p-listen-btn { width: 100%; justify-content: center; gap: var(--space-2); }
+
+/* Divider */
+.p-divider {
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--color-text-subtle);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.p-divider::before,
+.p-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
+}
+
+/* Record button */
+.p-record-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.p-record-btn {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+  cursor: pointer;
+}
+.p-record-btn:hover {
+  border-color: var(--color-error);
+  background: var(--color-error-bg);
+}
+.p-record-btn:active { transform: scale(0.95); }
+
+.p-record-btn--recording {
+  border-color: var(--color-error);
+  background: var(--color-error-bg);
+}
+.p-record-btn--processing {
+  border-color: var(--color-warning);
+  background: var(--color-warning-bg);
+  cursor: default;
+}
+
+/* Pulsing ring around record button */
+.p-record-ring {
+  position: absolute;
+  inset: -8px;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-error);
+  opacity: 0;
+  pointer-events: none;
+}
+.p-record-ring--active {
+  animation: recordPulse 1.2s ease-in-out infinite;
+}
+@keyframes recordPulse {
+  0%   { opacity: 0.7; transform: scale(1); }
+  100% { opacity: 0;   transform: scale(1.4); }
+}
+
+/* Red dot inside record button */
+.p-record-dot {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-full);
+  background: var(--color-error);
+  transition: transform var(--transition-fast);
+}
+.p-record-btn--recording .p-record-dot {
+  border-radius: var(--radius-sm);
+  transform: scale(0.7);
+}
+.p-record-btn--processing .p-record-dot {
+  background: var(--color-warning);
+  animation: spin 0.8s linear infinite;
+}
+
+.p-record-label {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+/* Status message */
+.p-status {
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  min-height: 1.25rem;
+}
+.p-status--error { color: var(--color-error); }
+.p-status--warn  { color: var(--color-warning); }
+
+/* Results panel */
+.p-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  animation: screenIn var(--transition-normal) ease;
+}
+
+/* Score rows */
+.p-scores { display: flex; flex-direction: column; gap: var(--space-3); }
+
+.p-score-item { display: flex; flex-direction: column; gap: var(--space-1); }
+
+.p-score-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.p-score-label {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.p-score-value {
+  font-size: var(--text-xl);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.p-score-value--excellent { color: var(--color-score-excellent); }
+.p-score-value--good      { color: var(--color-score-good); }
+.p-score-value--fair      { color: var(--color-score-fair); }
+.p-score-value--poor      { color: var(--color-score-poor); }
+
+.p-score-bar {
+  height: 6px;
+  background: var(--color-surface-2);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.p-score-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  transition: width 0.6s ease;
+}
+.p-score-fill--excellent { background: var(--color-score-excellent); }
+.p-score-fill--good      { background: var(--color-score-good); }
+.p-score-fill--fair      { background: var(--color-score-fair); }
+.p-score-fill--poor      { background: var(--color-score-poor); }
+
+/* Word pills */
+.p-words-wrap { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.p-words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.p-word {
+  display: inline-block;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: default;
+  transition: transform var(--transition-fast);
+}
+.p-word:hover { transform: scale(1.08); }
+
+.p-word--none          { background: var(--color-success-bg); color: var(--color-success); }
+.p-word--mispronunciation { background: var(--color-warning-bg); color: var(--color-warning); }
+.p-word--omission      { background: var(--color-error-bg); color: var(--color-error); }
+.p-word--insertion     {
+  background: var(--color-surface-2);
+  color: var(--color-text-subtle);
+  text-decoration: line-through;
+}
+
+/* Practice action buttons */
+.p-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: stretch;
+}
+
+/* Results stub (kept for Part 2) */
 .results-main {
   max-width: var(--max-width);
   margin: 0 auto;
@@ -748,16 +1031,9 @@ input, select, textarea { font: inherit; color: inherit; }
   text-align: center;
 }
 
-.coming-soon-icon {
-  font-size: 56px;
-}
-
-.coming-soon-title {
-  font-size: var(--text-2xl);
-  font-weight: 700;
-}
-
-.coming-soon-text {
+.coming-soon-icon  { font-size: 56px; }
+.coming-soon-title { font-size: var(--text-2xl); font-weight: 700; }
+.coming-soon-text  {
   font-size: var(--text-base);
   color: var(--color-text-muted);
   max-width: 280px;

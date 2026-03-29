@@ -40,6 +40,14 @@ const state = {
 // Transient "pending" settings in the Settings UI (not yet saved to DB).
 let pendingSettings = {};
 
+// Practice session state (Level 0 sandbox)
+const practiceState = {
+  phrase:       'The quick brown fox jumps over the lazy dog.',
+  status:       'idle',   // 'idle' | 'speaking' | 'recording' | 'processing' | 'done'
+  result:       null,
+  recordingBlob: null,
+};
+
 // ===========================================================================
 // IndexedDB helpers
 // ===========================================================================
@@ -284,6 +292,17 @@ function renderHomeScreen() {
 
     <div class="screen-body">
       <main class="home-main">
+
+        <!-- Level 0 — sandbox -->
+        <button class="level0-card" id="level0-btn">
+          <span class="level0-icon">🎯</span>
+          <div class="level0-text">
+            <span class="level0-title">Niveau 0 — Bac à sable</span>
+            <span class="level0-sub">Testez n'importe quelle phrase</span>
+          </div>
+          <span class="level0-arrow">→</span>
+        </button>
+
         <div>
           <p class="home-section-title">${t('home.title')}</p>
         </div>
@@ -314,41 +333,289 @@ function renderHomeScreen() {
   `;
 
   document.getElementById('home-settings-btn').addEventListener('click', () => navigate('settings'));
+  document.getElementById('level0-btn').addEventListener('click', () => navigate('practice'));
 
   document.querySelectorAll('.level-card:not(.level-card--locked)').forEach(btn => {
-    btn.addEventListener('click', () => {
-      // Practice screen will use this when Part 2 is implemented
-      navigate('practice');
-    });
+    btn.addEventListener('click', () => navigate('practice'));
   });
 }
 
 // ===========================================================================
-// Practice screen (stub — expanded in Part 2)
+// Practice screen — Level 0 sandbox
 // ===========================================================================
 
 function renderPracticeScreen() {
   const screen = document.getElementById('screen-practice');
+  const engineLabel = state.settings.assessmentEngine === 'azure'
+    ? `<span class="badge badge-primary">Azure</span>`
+    : `<span class="badge badge-muted">Web Speech</span>`;
+
   screen.innerHTML = `
     <header class="app-header">
       <button class="btn-icon" id="practice-back-btn" aria-label="${t('nav.back')}">
         ${ICON_BACK}
       </button>
-      <h1 class="header-title">${t('nav.practice')}</h1>
+      <h1 class="header-title">Niveau 0</h1>
+      <div class="header-actions">${engineLabel}</div>
     </header>
 
     <div class="screen-body">
-      <div class="practice-main">
-        <div class="coming-soon-icon">🥷</div>
-        <h2 class="coming-soon-title">${t('nav.practice')}</h2>
-        <p class="coming-soon-text">${t('practice.coming')}</p>
-        <button class="btn btn-secondary" id="practice-back-btn2">${t('nav.back')}</button>
+      <div class="practice-l0">
+
+        <!-- Phrase input -->
+        <section class="p-section">
+          <label class="p-label" for="phrase-input">Phrase à prononcer</label>
+          <textarea class="p-textarea" id="phrase-input" rows="3"
+                    placeholder="Tapez ou collez une phrase en anglais…"
+                    spellcheck="false">${esc(practiceState.phrase)}</textarea>
+        </section>
+
+        <!-- Listen button -->
+        <button class="btn btn-secondary p-listen-btn" id="listen-btn">
+          <span id="listen-icon">🔊</span> Écouter le modèle
+        </button>
+
+        <div class="p-divider">puis répétez</div>
+
+        <!-- Record button -->
+        <div class="p-record-wrap">
+          <button class="p-record-btn" id="record-btn" aria-label="Enregistrer">
+            <span class="p-record-ring" id="record-ring"></span>
+            <span class="p-record-dot" id="record-dot"></span>
+          </button>
+          <span class="p-record-label" id="record-label">Appuyer pour enregistrer</span>
+        </div>
+
+        <!-- Status -->
+        <div class="p-status" id="p-status" aria-live="polite"></div>
+
+        <!-- Results -->
+        <div class="p-results hidden" id="p-results">
+
+          <!-- Scores -->
+          <div class="p-scores" id="p-scores"></div>
+
+          <!-- Word pills -->
+          <div class="p-words-wrap">
+            <p class="p-label">Analyse mot par mot</p>
+            <div class="p-words" id="p-words"></div>
+          </div>
+
+          <!-- Playback -->
+          <div class="p-actions">
+            <button class="btn btn-ghost btn-sm" id="replay-btn" style="display:none">
+              ▶ Réécouter mon enregistrement
+            </button>
+            <button class="btn btn-secondary" id="retry-btn">🔄 Réessayer</button>
+          </div>
+        </div>
+
       </div>
     </div>
   `;
 
-  document.getElementById('practice-back-btn').addEventListener('click', () => navigate('home'));
-  document.getElementById('practice-back-btn2').addEventListener('click', () => navigate('home'));
+  document.getElementById('practice-back-btn').addEventListener('click', () => {
+    state.engines.tts?.stop?.();
+    state.engines.assessment?.stop?.();
+    practiceState.status = 'idle';
+    navigate('home');
+  });
+
+  document.getElementById('phrase-input').addEventListener('input', e => {
+    practiceState.phrase = e.target.value;
+  });
+
+  document.getElementById('listen-btn').addEventListener('click', handleListen);
+  document.getElementById('record-btn').addEventListener('click', handleRecord);
+  document.getElementById('retry-btn').addEventListener('click', resetPractice);
+
+  // Restore previous result if navigating back
+  if (practiceState.status === 'done' && practiceState.result) {
+    showResults(practiceState.result);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Practice screen helpers
+// ---------------------------------------------------------------------------
+
+async function handleListen() {
+  const phrase = document.getElementById('phrase-input')?.value?.trim();
+  if (!phrase) return;
+  practiceState.phrase = phrase;
+
+  const btn      = document.getElementById('listen-btn');
+  const iconEl   = document.getElementById('listen-icon');
+  const statusEl = document.getElementById('p-status');
+
+  btn.disabled = true;
+  iconEl.textContent = '⏳';
+  statusEl.textContent = 'Lecture…';
+
+  try {
+    await state.engines.tts.speak(phrase);
+    statusEl.textContent = '';
+  } catch (err) {
+    statusEl.textContent = `Erreur TTS : ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    iconEl.textContent = '🔊';
+  }
+}
+
+async function handleRecord() {
+  if (practiceState.status === 'recording') return; // guard double-tap
+
+  const phrase = document.getElementById('phrase-input')?.value?.trim();
+  if (!phrase) {
+    setStatus('Tapez une phrase avant d\'enregistrer.', 'warn');
+    return;
+  }
+  practiceState.phrase = phrase;
+
+  // Stop any ongoing TTS
+  state.engines.tts?.stop?.();
+
+  // Hide previous results
+  document.getElementById('p-results')?.classList.add('hidden');
+
+  setRecordUI('recording');
+  practiceState.status = 'recording';
+
+  try {
+    const result = await state.engines.assessment.assess(phrase, status => {
+      if (status === 'connecting') setStatus('Connexion du microphone…');
+      if (status === 'recording')  setStatus('Enregistrement… Parlez maintenant');
+    });
+
+    practiceState.status      = 'done';
+    practiceState.result      = result;
+    practiceState.recordingBlob = result.recordingBlob ?? null;
+
+    setRecordUI('done');
+    setStatus('');
+    showResults(result);
+  } catch (err) {
+    practiceState.status = 'idle';
+    setRecordUI('idle');
+    setStatus(`Erreur : ${err.message}`, 'error');
+  }
+}
+
+function setStatus(text, type = '') {
+  const el = document.getElementById('p-status');
+  if (!el) return;
+  el.textContent  = text;
+  el.className    = `p-status${type ? ` p-status--${type}` : ''}`;
+}
+
+function setRecordUI(status) {
+  const btn    = document.getElementById('record-btn');
+  const ring   = document.getElementById('record-ring');
+  const dot    = document.getElementById('record-dot');
+  const label  = document.getElementById('record-label');
+  const listenBtn = document.getElementById('listen-btn');
+  if (!btn) return;
+
+  btn.classList.toggle('p-record-btn--recording', status === 'recording');
+  btn.classList.toggle('p-record-btn--processing', status === 'processing');
+  ring?.classList.toggle('p-record-ring--active', status === 'recording');
+
+  if (status === 'recording') {
+    label.textContent = 'Enregistrement…';
+    btn.disabled = true;
+    listenBtn.disabled = true;
+  } else if (status === 'processing') {
+    label.textContent = 'Analyse…';
+    btn.disabled = true;
+    listenBtn.disabled = true;
+  } else {
+    label.textContent = 'Appuyer pour enregistrer';
+    btn.disabled = false;
+    listenBtn.disabled = false;
+  }
+}
+
+function resetPractice() {
+  practiceState.status = 'idle';
+  practiceState.result = null;
+  practiceState.recordingBlob = null;
+  setRecordUI('idle');
+  setStatus('');
+  document.getElementById('p-results')?.classList.add('hidden');
+}
+
+function showResults(result) {
+  const resultsEl = document.getElementById('p-results');
+  if (!resultsEl) return;
+  resultsEl.classList.remove('hidden');
+
+  // Scores
+  const scoresEl = document.getElementById('p-scores');
+  const scoreItems = [
+    { label: 'Score global',  value: result.pronScore,         icon: '🏆' },
+    { label: 'Précision',     value: result.accuracyScore,     icon: '🎯' },
+    { label: 'Fluidité',      value: result.fluencyScore,      icon: '🌊' },
+    { label: 'Complétude',    value: result.completenessScore, icon: '✅' },
+  ];
+  if (result.prosodyScore != null) {
+    scoreItems.push({ label: 'Prosodie', value: result.prosodyScore, icon: '🎵' });
+  }
+
+  scoresEl.innerHTML = scoreItems.map(item => {
+    const v    = Math.round(item.value ?? 0);
+    const cls  = scoreClass(v);
+    return `
+      <div class="p-score-item">
+        <div class="p-score-top">
+          <span class="p-score-label">${item.icon} ${item.label}</span>
+          <span class="p-score-value p-score-value--${cls}">${v}</span>
+        </div>
+        <div class="p-score-bar">
+          <div class="p-score-fill p-score-fill--${cls}" style="width:${v}%"></div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Word pills
+  const wordsEl = document.getElementById('p-words');
+  if (result.words?.length) {
+    wordsEl.innerHTML = result.words.map(w => {
+      const type = (w.errorType ?? 'None').toLowerCase();
+      const tip  = phonemeDetail(w);
+      return `<span class="p-word p-word--${type}" title="${esc(tip)}">${esc(w.word)}</span>`;
+    }).join(' ');
+  } else if (result.recognizedText) {
+    wordsEl.innerHTML = `<span class="text-muted text-sm">"${esc(result.recognizedText)}"</span>`;
+  } else {
+    wordsEl.innerHTML = `<span class="text-muted text-sm">Aucun mot reconnu</span>`;
+  }
+
+  // Replay button
+  const replayBtn = document.getElementById('replay-btn');
+  if (replayBtn && practiceState.recordingBlob) {
+    replayBtn.style.display = 'inline-flex';
+    replayBtn.onclick = () => {
+      const url    = URL.createObjectURL(practiceState.recordingBlob);
+      const audio  = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      audio.play();
+    };
+  }
+}
+
+function scoreClass(v) {
+  if (v >= 80) return 'excellent';
+  if (v >= 60) return 'good';
+  if (v >= 40) return 'fair';
+  return 'poor';
+}
+
+function phonemeDetail(word) {
+  if (!word.phonemes?.length) return word.errorType ?? '';
+  const worst = [...word.phonemes].sort((a, b) => a.accuracyScore - b.accuracyScore)[0];
+  return worst ? `/${worst.phoneme}/ — ${Math.round(worst.accuracyScore)}%` : '';
 }
 
 // ===========================================================================
