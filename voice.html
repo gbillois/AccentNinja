@@ -31,8 +31,9 @@
     <h2>1) Azure Credentials</h2>
     <label for="speechKey">Speech API Key</label>
     <input id="speechKey" type="password" placeholder="Paste your Azure Speech key" autocomplete="off" />
-    <div class="actions" style="margin-top: .75rem;">
+    <div class="actions" style="margin-top: .75rem; flex-wrap: wrap;">
       <button id="saveApiBtn" type="button">💾 Save API key securely</button>
+      <button id="unlockApiBtn" type="button">🔓 Unlock saved API key</button>
       <button id="clearApiBtn" type="button">🧹 Clear saved API key</button>
     </div>
 
@@ -89,6 +90,7 @@
   <script>
     const $ = (id) => document.getElementById(id);
     const fieldsToPersist = ["speechRegion", "locale", "referenceText", "gradingSystem", "granularity"];
+    const encryptedApiStorageKey = "accentninja_api_key_encrypted";
 
     function loadSavedValues() {
       fieldsToPersist.forEach((id) => {
@@ -149,7 +151,7 @@
       const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(speechKey));
 
       localStorage.setItem(
-        "accentninja_api_key_encrypted",
+        encryptedApiStorageKey,
         JSON.stringify({
           v: 1,
           iv: toBase64(iv),
@@ -161,11 +163,12 @@
     }
 
     async function loadApiKeySecurely() {
-      const raw = localStorage.getItem("accentninja_api_key_encrypted");
+      const raw = localStorage.getItem(encryptedApiStorageKey);
       if (!raw) return;
 
       try {
         const { iv, salt, data } = JSON.parse(raw);
+        if (!iv || !salt || !data) throw new Error("Saved key format is invalid.");
         const passphrase = prompt("Enter passphrase to unlock saved API key:");
         if (!passphrase) {
           setStatus("Saved key found. Unlock canceled.");
@@ -187,7 +190,8 @@
     }
 
     function clearSavedApiKey() {
-      localStorage.removeItem("accentninja_api_key_encrypted");
+      localStorage.removeItem(encryptedApiStorageKey);
+      $("speechKey").value = "";
       setStatus("Saved API key removed from this browser.");
     }
 
@@ -292,9 +296,12 @@
 
     $("startBtn").addEventListener("click", runAssessment);
     $("saveApiBtn").addEventListener("click", () => saveApiKeySecurely().catch((err) => setStatus(`Failed to save API key: ${err.message}`, true)));
+    $("unlockApiBtn").addEventListener("click", () => loadApiKeySecurely().catch((err) => setStatus(`Failed to unlock saved API key: ${err.message}`, true)));
     $("clearApiBtn").addEventListener("click", clearSavedApiKey);
     loadSavedValues();
-    loadApiKeySecurely().catch((err) => setStatus(`Failed to load saved API key: ${err.message}`, true));
+    if (localStorage.getItem(encryptedApiStorageKey)) {
+      setStatus("Saved API key found. Click \"Unlock saved API key\" to load it.");
+    }
   </script>
 </body>
 </html>
