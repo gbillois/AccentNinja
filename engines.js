@@ -117,12 +117,10 @@ export class WebSpeechTTS {
   }
 
   speak(text) {
-    // Only cancel if actually speaking — calling cancel() unconditionally
-    // causes iOS Safari to silently ignore subsequent speak() calls (WebKit bug),
-    // and on Chrome it can drop the utterance if speak() follows immediately.
-    if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
-      window.speechSynthesis.cancel();
-    }
+    // Always cancel to clear Chrome's potentially stuck synthesis state.
+    // Without this, Chrome may silently drop speak() calls even when
+    // speaking/pending are both false (known Chromium bug).
+    window.speechSynthesis.cancel();
 
     return new Promise((resolve, reject) => {
       const utterance = new SpeechSynthesisUtterance(text);
@@ -144,28 +142,47 @@ export class WebSpeechTTS {
       // Safety timeout: some browsers never fire onend/onerror
       const SAFETY_TIMEOUT_MS = 30000;
       const safetyTimer = setTimeout(() => {
+        if (this._resumeTimer) { clearInterval(this._resumeTimer); this._resumeTimer = null; }
         this._utterance = null;
         resolve();
       }, SAFETY_TIMEOUT_MS);
 
+      // Chrome pauses synthesis after ~15 s; periodically call resume().
+      const startResumeWorkaround = () => {
+        this._resumeTimer = setInterval(() => {
+          if (window.speechSynthesis.speaking) window.speechSynthesis.resume();
+        }, 5000);
+      };
+
       utterance.onend = () => {
         clearTimeout(safetyTimer);
+        if (this._resumeTimer) { clearInterval(this._resumeTimer); this._resumeTimer = null; }
         resolve();
       };
       utterance.onerror = e => {
         clearTimeout(safetyTimer);
+        if (this._resumeTimer) { clearInterval(this._resumeTimer); this._resumeTimer = null; }
         // iOS Safari fires 'interrupted' when cancel() is called — not a real error
         if (e.error === 'interrupted') { resolve(); return; }
         reject(new Error(`TTS error: ${e.error}`));
       };
 
       this._utterance = utterance;
-      window.speechSynthesis.speak(utterance);
+
+      // Delay speak() after cancel() — iOS Safari silently ignores speak()
+      // called synchronously after cancel() (WebKit bug). The 50 ms gap
+      // lets the engine reset while staying within the user-gesture window
+      // on all tested browsers (Chrome, Safari, Firefox, Edge).
+      setTimeout(() => {
+        window.speechSynthesis.speak(utterance);
+        startResumeWorkaround();
+      }, 50);
     });
   }
 
   stop() {
     window.speechSynthesis.cancel();
+    if (this._resumeTimer) { clearInterval(this._resumeTimer); this._resumeTimer = null; }
     this._utterance = null;
   }
 }
