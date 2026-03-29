@@ -110,6 +110,176 @@
   --shadow-lg: 0 8px 24px rgba(0,0,0,0.15);
 }
 
+/* ============================================================
+   Japan / Fruit Ninja Theme
+   Dark ink + torii red + sakura pink + bamboo green
+   ============================================================ */
+
+[data-theme="japan"] {
+  /* --- Backgrounds: deep ink black with crimson undertone --- */
+  --color-bg:           #0d0508;
+  --color-surface:      #1a0c12;
+  --color-surface-2:    #2a1520;
+  --color-surface-3:    #3e1f2e;
+  --color-border:       #5e2d40;
+  --color-border-subtle:#1a0c12;
+
+  /* --- Text: cherry blossom pale --- */
+  --color-text:         #ffedf2;
+  --color-text-muted:   #d48498;
+  --color-text-subtle:  #9e5a6e;
+
+  /* --- Primary: torii red --- */
+  --color-primary:      #e8274f;
+  --color-primary-hover:#ff4d70;
+  --color-primary-dim:  #3d0a1a;
+  --color-primary-text: #ffffff;
+
+  /* --- Status: fruit-ninja vivid palette --- */
+  --color-success:      #27ae60;   /* kiwi green */
+  --color-success-bg:   #0a2018;
+  --color-warning:      #e67e22;   /* mango orange */
+  --color-warning-bg:   #2a1200;
+  --color-error:        #e74c3c;   /* watermelon red */
+  --color-error-bg:     #2a0808;
+  --color-info:         #3498db;   /* blueberry blue */
+
+  /* --- Score bands --- */
+  --color-score-excellent: #27ae60;  /* kiwi */
+  --color-score-good:      #f1c40f;  /* star fruit */
+  --color-score-fair:      #e67e22;  /* mango */
+  --color-score-poor:      #e74c3c;  /* watermelon */
+
+  /* --- Dramatic shadows with crimson glow --- */
+  --shadow-sm: 0 1px 4px rgba(0,0,0,0.7);
+  --shadow-md: 0 4px 12px rgba(232,39,79,0.15), 0 2px 8px rgba(0,0,0,0.6);
+  --shadow-lg: 0 8px 24px rgba(232,39,79,0.2),  0 4px 16px rgba(0,0,0,0.75);
+}
+
+/* --- Splash screen: rising sun atmosphere --- */
+[data-theme="japan"] #screen-splash {
+  background:
+    radial-gradient(circle at 50% 42%, rgba(232,39,79,0.18) 0%, transparent 50%),
+    radial-gradient(circle at 50% 42%, rgba(232,39,79,0.08) 0%, transparent 70%),
+    var(--color-bg);
+  overflow: hidden;
+}
+
+/* Rising sun glow disc behind the logo */
+[data-theme="japan"] .splash-content {
+  position: relative;
+  z-index: 1;
+}
+[data-theme="japan"] .splash-content::before {
+  content: '';
+  position: absolute;
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(232,39,79,0.22) 0%, rgba(232,39,79,0.06) 55%, transparent 70%);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, calc(-50% - 20px));
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* Sakura petal 1 (top-left) */
+[data-theme="japan"] #screen-splash::before {
+  content: '';
+  position: absolute;
+  width: 13px;
+  height: 18px;
+  background: rgba(232,39,79,0.5);
+  border-radius: 50% 50% 50% 50% / 30% 30% 70% 70%;
+  top: 12%;
+  left: 18%;
+  transform: rotate(-30deg);
+  animation: sakuraDrift1 9s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Sakura petal 2 (top-right) */
+[data-theme="japan"] #screen-splash::after {
+  content: '';
+  position: absolute;
+  width: 10px;
+  height: 14px;
+  background: rgba(255,77,112,0.45);
+  border-radius: 50% 50% 50% 50% / 30% 30% 70% 70%;
+  top: 18%;
+  right: 22%;
+  transform: rotate(45deg);
+  animation: sakuraDrift2 11s ease-in-out infinite 2.5s;
+  pointer-events: none;
+}
+
+@keyframes sakuraDrift1 {
+  0%   { transform: rotate(-30deg)  translateY(0)    translateX(0);    opacity: 0.55; }
+  25%  { transform: rotate(-18deg)  translateY(35px)  translateX(18px);  opacity: 0.7; }
+  55%  { transform: rotate(-38deg)  translateY(85px)  translateX(-12px); opacity: 0.45; }
+  80%  { transform: rotate(-12deg)  translateY(140px) translateX(22px);  opacity: 0.25; }
+  100% { transform: rotate(-30deg)  translateY(200px) translateX(8px);   opacity: 0; }
+}
+
+@keyframes sakuraDrift2 {
+  0%   { transform: rotate(45deg)  translateY(0)    translateX(0);    opacity: 0.4; }
+  30%  { transform: rotate(58deg)  translateY(45px)  translateX(-22px); opacity: 0.6; }
+  65%  { transform: rotate(38deg)  translateY(100px) translateX(12px);  opacity: 0.35; }
+  100% { transform: rotate(62deg)  translateY(190px) translateX(-18px); opacity: 0; }
+}
+
+/* Tint the SVG logo toward red */
+[data-theme="japan"] .splash-logo {
+  filter: hue-rotate(130deg) brightness(0.9);
+}
+
+/* --- Header: subtle crimson bottom border + dark gradient --- */
+[data-theme="japan"] .app-header {
+  border-bottom-color: rgba(232,39,79,0.35);
+  background: linear-gradient(180deg, rgba(13,5,8,0.98) 0%, rgba(26,12,18,0.98) 100%);
+}
+
+/* --- Primary button: torii-red gradient with slash-shine effect --- */
+[data-theme="japan"] .btn-primary {
+  background: linear-gradient(135deg, #e8274f 0%, #c01e3e 100%);
+  box-shadow: 0 2px 12px rgba(232,39,79,0.4);
+  overflow: hidden;
+  position: relative;
+}
+[data-theme="japan"] .btn-primary::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -110%;
+  width: 55%;
+  height: 200%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent);
+  transform: skewX(-20deg);
+  transition: left 0.5s ease;
+  pointer-events: none;
+}
+[data-theme="japan"] .btn-primary:hover {
+  background: linear-gradient(135deg, #ff4d70 0%, #e8274f 100%);
+  box-shadow: 0 4px 20px rgba(232,39,79,0.55);
+}
+[data-theme="japan"] .btn-primary:hover::after {
+  left: 150%;
+}
+
+/* --- Level cards: crimson glow on hover --- */
+[data-theme="japan"] .level-card:hover,
+[data-theme="japan"] .quick-start-card:hover {
+  border-color: rgba(232,39,79,0.5);
+  box-shadow: 0 0 18px rgba(232,39,79,0.18);
+}
+
+/* --- Settings section: subtle left accent border --- */
+[data-theme="japan"] .settings-section {
+  border-left: 3px solid rgba(232,39,79,0.3);
+  padding-left: calc(var(--space-4) - 3px);
+}
+
 /* ===========================================================================
    2. Reset & Base
    =========================================================================== */

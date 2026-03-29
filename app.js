@@ -826,6 +826,7 @@ function renderSettingsScreen() {
               <select class="form-select" id="ui-theme">
                 <option value="dark"  ${s.theme === 'dark'  ? 'selected' : ''}>${t('settings.theme.dark')}</option>
                 <option value="light" ${s.theme === 'light' ? 'selected' : ''}>${t('settings.theme.light')}</option>
+                <option value="japan" ${s.theme === 'japan' ? 'selected' : ''}>${t('settings.theme.japan')}</option>
               </select>
             </div>
           </section>
