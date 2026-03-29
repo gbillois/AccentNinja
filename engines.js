@@ -117,8 +117,13 @@ export class WebSpeechTTS {
   }
 
   async speak(text) {
+    window.speechSynthesis.cancel();
+
+    // Chrome bug: calling speak() immediately after cancel() silently drops
+    // the utterance and never fires onend. A short delay works around this.
+    await new Promise(r => setTimeout(r, 50));
+
     return new Promise((resolve, reject) => {
-      window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
       const lang = this.settings.accentTarget === 'uk' ? 'en-GB' : 'en-US';
       const voices = this.getAvailableVoices();
@@ -134,8 +139,22 @@ export class WebSpeechTTS {
       utterance.rate = 1.0;
       utterance.pitch = 1.0;
       utterance.volume = 1.0;
-      utterance.onend = resolve;
-      utterance.onerror = e => reject(new Error(`TTS error: ${e.error}`));
+
+      // Safety timeout: Chrome sometimes never fires onend/onerror
+      const SAFETY_TIMEOUT_MS = 30000;
+      const safetyTimer = setTimeout(() => {
+        this._utterance = null;
+        resolve();
+      }, SAFETY_TIMEOUT_MS);
+
+      utterance.onend = () => {
+        clearTimeout(safetyTimer);
+        resolve();
+      };
+      utterance.onerror = e => {
+        clearTimeout(safetyTimer);
+        reject(new Error(`TTS error: ${e.error}`));
+      };
 
       this._utterance = utterance;
       window.speechSynthesis.speak(utterance);
