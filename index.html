@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+  <!-- PWA / theme -->
+  <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="AccentNinja">
+
+  <title>AccentNinja</title>
+  <meta name="description" content="English pronunciation coach for French speakers. Real-time phoneme-level assessment with Azure Speech.">
+
+  <!-- Manifest & icons -->
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-192.svg">
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="style.css">
+
+  <!-- Azure Speech SDK (loaded before modules so window.SpeechSDK is available) -->
+  <script src="https://cdn.jsdelivr.net/npm/microsoft-cognitiveservices-speech-sdk@latest/distrib/browser/microsoft.cognitiveservices.speech.sdk.bundle-min.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+  <div id="app">
+
+    <!-- Splash / loading -->
+    <div id="screen-splash" class="screen active" aria-live="polite">
+      <div class="splash-content">
+        <svg class="splash-logo" viewBox="0 0 80 80" fill="none" aria-hidden="true">
+          <rect width="80" height="80" rx="18" fill="#0f172a"/>
+          <g transform="translate(40,40)">
+            <rect x="-5" y="-24" width="10" height="48" rx="3" fill="#6366f1"/>
+            <rect x="-5" y="-24" width="10" height="48" rx="3" fill="#6366f1" transform="rotate(45)"/>
+            <rect x="-5" y="-24" width="10" height="48" rx="3" fill="#818cf8" transform="rotate(90)"/>
+            <rect x="-5" y="-24" width="10" height="48" rx="3" fill="#818cf8" transform="rotate(135)"/>
+            <circle cx="0" cy="0" r="7" fill="#c7d2fe"/>
+            <circle cx="0" cy="0" r="3" fill="#0f172a"/>
+          </g>
+        </svg>
+        <h1 class="splash-title">AccentNinja</h1>
+        <p class="splash-subtitle" id="splash-status">Chargement…</p>
+        <div class="splash-spinner" aria-hidden="true"></div>
+      </div>
+    </div>
+
+    <!-- Setup / first launch -->
+    <div id="screen-setup" class="screen"></div>
+
+    <!-- Home / level selection -->
+    <div id="screen-home" class="screen"></div>
+
+    <!-- Practice session -->
+    <div id="screen-practice" class="screen"></div>
+
+    <!-- Results -->
+    <div id="screen-results" class="screen"></div>
+
+    <!-- Settings -->
+    <div id="screen-settings" class="screen"></div>
+
+  </div>
+
+  <!-- Toast container (outside #app so always on top) -->
+  <div id="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>
+
+  <!-- Application (ES module) -->
+  <script type="module" src="app.js"></script>
+
+</body>
+</html>
