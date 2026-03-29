@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#1a1a2e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="AccentNinja">
+  <meta name="description" content="English pronunciation coach for French speakers">
+
+  <title>AccentNinja</title>
+
+  <link rel="manifest" href="./manifest.json">
+  <link rel="apple-touch-icon" href="./icons/icon-192.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=Noto+Sans:wght@400;600&family=Noto+Sans+Mono:wght@400&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+  <!-- App Shell -->
+  <div id="app">
+
+    <!-- ───── SPLASH SCREEN ───── -->
+    <div id="screen-splash" class="screen screen-splash" hidden>
+      <div class="splash-content">
+        <div class="splash-logo">
+          <span class="logo-icon">忍</span>
+          <h1 class="logo-title">AccentNinja</h1>
+        </div>
+      </div>
+    </div>
+
+    <!-- ───── ONBOARDING SCREENS ───── -->
+    <div id="screen-onboarding" class="screen" hidden>
+      <!-- Step 1: Welcome -->
+      <div id="onboard-welcome" class="onboard-step" hidden>
+        <div class="onboard-content">
+          <div class="onboard-logo">
+            <span class="logo-icon-sm">忍</span>
+            <h1 id="ob-title" class="onboard-title"></h1>
+          </div>
+          <p id="ob-desc" class="onboard-desc"></p>
+          <div class="lang-selector">
+            <button class="lang-btn active" data-lang="fr">🇫🇷 Français</button>
+            <button class="lang-btn" data-lang="en">🇬🇧 English</button>
+          </div>
+          <button id="ob-get-started" class="btn btn-primary btn-full"></button>
+        </div>
+      </div>
+
+      <!-- Step 2: Azure Setup -->
+      <div id="onboard-azure" class="onboard-step" hidden>
+        <div class="onboard-nav">
+          <button class="btn-icon" id="ob-azure-back">←</button>
+          <span class="step-indicator">2 / 4</span>
+        </div>
+        <div class="onboard-content">
+          <h2 id="ob-azure-title" class="onboard-title"></h2>
+          <p id="ob-azure-desc" class="onboard-desc"></p>
+
+          <div class="azure-paths">
+            <button id="ob-have-key" class="btn btn-secondary btn-full">🔑 <span></span></button>
+            <button id="ob-setup-azure" class="btn btn-secondary btn-full">🆓 <span></span></button>
+          </div>
+
+          <!-- Key input form (hidden initially) -->
+          <div id="ob-key-form" class="key-form" hidden>
+            <div class="form-group">
+              <label id="ob-key-label" class="form-label"></label>
+              <input id="ob-key-input" type="password" class="form-input" autocomplete="off">
+            </div>
+            <div class="form-group">
+              <label id="ob-region-label" class="form-label"></label>
+              <select id="ob-region-select" class="form-input">
+                <option value="eastus">East US</option>
+                <option value="eastus2">East US 2</option>
+                <option value="westus">West US</option>
+                <option value="westus2">West US 2</option>
+                <option value="westeurope" selected>West Europe</option>
+                <option value="northeurope">North Europe</option>
+                <option value="francecentral">France Central</option>
+                <option value="uksouth">UK South</option>
+                <option value="eastasia">East Asia</option>
+                <option value="southeastasia">Southeast Asia</option>
+                <option value="japaneast">Japan East</option>
+                <option value="australiaeast">Australia East</option>
+                <option value="canadacentral">Canada Central</option>
+                <option value="brazilsouth">Brazil South</option>
+              </select>
+            </div>
+            <button id="ob-test-key" class="btn btn-secondary"></button>
+            <div id="ob-key-status" class="key-status" hidden></div>
+          </div>
+
+          <!-- Azure guide (hidden initially) -->
+          <div id="ob-azure-guide" class="azure-guide" hidden>
+            <h3 id="ob-guide-title" class="guide-title"></h3>
+            <div id="ob-guide-steps" class="guide-steps"></div>
+            <a id="ob-portal-link" href="https://portal.azure.com/#create/Microsoft.CognitiveServicesSpeechServices"
+               target="_blank" rel="noopener" class="btn btn-secondary btn-full"></a>
+          </div>
+
+          <!-- Accent selector -->
+          <div class="accent-selector">
+            <label class="form-label" id="ob-accent-label"></label>
+            <div class="toggle-group">
+              <button class="toggle-btn active" data-accent="us" id="ob-accent-us"></button>
+              <button class="toggle-btn" data-accent="uk" id="ob-accent-uk"></button>
+            </div>
+          </div>
+
+          <button id="ob-skip-azure" class="btn btn-ghost btn-full"></button>
+          <div id="ob-skip-warn" class="warn-text" hidden></div>
+          <button id="ob-azure-next" class="btn btn-primary btn-full" hidden></button>
+        </div>
+      </div>
+
+      <!-- Step 3: Microphone -->
+      <div id="onboard-mic" class="onboard-step" hidden>
+        <div class="onboard-nav">
+          <button class="btn-icon" id="ob-mic-back">←</button>
+          <span class="step-indicator">3 / 4</span>
+        </div>
+        <div class="onboard-content onboard-centered">
+          <div class="mic-visual" id="ob-mic-visual">
+            <svg width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="40" cy="40" r="38" stroke="var(--accent-red)" stroke-width="2"/>
+              <rect x="28" y="14" width="24" height="34" rx="12" fill="var(--accent-red)"/>
+              <path d="M18 40c0 12.15 9.85 22 22 22s22-9.85 22-22" stroke="var(--accent-red)" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+              <line x1="40" y1="62" x2="40" y2="70" stroke="var(--accent-red)" stroke-width="2.5" stroke-linecap="round"/>
+              <line x1="30" y1="70" x2="50" y2="70" stroke="var(--accent-red)" stroke-width="2.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <h2 id="ob-mic-title" class="onboard-title"></h2>
+          <p id="ob-mic-desc" class="onboard-desc"></p>
+          <button id="ob-allow-mic" class="btn btn-primary btn-full"></button>
+          <div id="ob-mic-error" class="error-card" hidden>
+            <p id="ob-mic-error-text"></p>
+            <button id="ob-mic-retry" class="btn btn-secondary"></button>
+          </div>
+          <div id="ob-mic-success" class="success-text" hidden></div>
+        </div>
+      </div>
+
+      <!-- Step 4: Placement Test Intro -->
+      <div id="onboard-placement-intro" class="onboard-step" hidden>
+        <div class="onboard-nav">
+          <span class="step-indicator">4 / 4</span>
+        </div>
+        <div class="onboard-content onboard-centered">
+          <h2 id="ob-placement-title" class="onboard-title"></h2>
+          <p id="ob-placement-desc" class="onboard-desc"></p>
+          <button id="ob-start-placement" class="btn btn-primary btn-full"></button>
+          <button id="ob-skip-placement" class="btn btn-ghost btn-full">Commencer au Niveau 1</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ───── PLACEMENT TEST ───── -->
+    <div id="screen-placement" class="screen" hidden>
+      <div class="screen-nav">
+        <h2 id="pt-title" class="screen-nav-title"></h2>
+        <span id="pt-progress" class="nav-progress"></span>
+      </div>
+      <div class="progress-bar-track">
+        <div id="pt-progress-bar" class="progress-bar-fill" style="width:0%"></div>
+      </div>
+      <div id="pt-content" class="practice-content"></div>
+    </div>
+
+    <!-- ───── HOME SCREEN ───── -->
+    <div id="screen-home" class="screen" hidden>
+      <div class="home-header">
+        <h1 class="home-title">AccentNinja</h1>
+        <button id="home-settings-btn" class="btn-icon" aria-label="Settings">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+            <path d="M11 14a3 3 0 100-6 3 3 0 000 6z" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M18.7 8.5a1.5 1.5 0 001.3-1.5V6a1.5 1.5 0 00-1.5-1.5h-.3a7 7 0 00-.6-1.5l.2-.2a1.5 1.5 0 000-2.1L16.7.6a1.5 1.5 0 00-2.1 0l-.2.2A7 7 0 0013 .3V0a1.5 1.5 0 00-1.5-1.5H10A1.5 1.5 0 008.5 0v.3a7 7 0 00-1.4.5l-.2-.2a1.5 1.5 0 00-2.1 0L3.6.7a1.5 1.5 0 000 2.1l.2.2A7 7 0 003.3 4.5H3A1.5 1.5 0 001.5 6v1a1.5 1.5 0 001.5 1.5h.3a7 7 0 00.5 1.4l-.2.2a1.5 1.5 0 000 2.1l.6.6a1.5 1.5 0 002.1 0l.2-.2A7 7 0 009 13v.5A1.5 1.5 0 0010.5 15h1A1.5 1.5 0 0013 13.5V13a7 7 0 001.4-.5l.2.2a1.5 1.5 0 002.1 0l.6-.6a1.5 1.5 0 000-2.1l-.2-.2a7 7 0 00.6-1.3z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+          </svg>
+        </button>
+      </div>
+
+      <div id="home-offline-badge" class="offline-badge" hidden></div>
+      <div id="home-azure-warn" class="azure-warn" hidden></div>
+
+      <div class="home-level-section">
+        <div class="level-badge-container">
+          <svg class="level-arc" width="96" height="96" viewBox="0 0 96 96">
+            <circle cx="48" cy="48" r="40" stroke="var(--border)" stroke-width="6" fill="none"/>
+            <circle id="home-level-arc" cx="48" cy="48" r="40"
+              stroke="var(--accent-red)" stroke-width="6" fill="none"
+              stroke-linecap="round"
+              stroke-dasharray="251.2"
+              stroke-dashoffset="251.2"
+              transform="rotate(-90 48 48)"/>
+          </svg>
+          <div class="level-badge-inner">
+            <span id="home-level-num" class="level-number">1</span>
+          </div>
+        </div>
+        <div class="level-info">
+          <div id="home-level-name" class="level-name"></div>
+          <div id="home-daily-progress" class="daily-progress-text"></div>
+          <div class="daily-progress-bar-track">
+            <div id="home-daily-bar" class="daily-progress-bar" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="home-ready-prompt" class="ready-prompt" hidden></div>
+
+      <div class="mode-grid">
+        <button class="mode-card" data-mode="words" id="mode-words">
+          <span class="mode-icon">📝</span>
+          <span class="mode-name" data-i18n="words"></span>
+          <span id="mode-words-count" class="mode-count"></span>
+        </button>
+        <button class="mode-card" data-mode="phrases" id="mode-phrases">
+          <span class="mode-icon">💬</span>
+          <span class="mode-name" data-i18n="phrases"></span>
+          <span id="mode-phrases-count" class="mode-count"></span>
+        </button>
+        <button class="mode-card" data-mode="minimal-pairs" id="mode-pairs">
+          <span class="mode-icon">🔄</span>
+          <span class="mode-name" data-i18n="minimal_pairs"></span>
+          <span id="mode-pairs-count" class="mode-count"></span>
+        </button>
+        <button class="mode-card" data-mode="shadowing" id="mode-shadow">
+          <span class="mode-icon">🎧</span>
+          <span class="mode-name" data-i18n="shadowing"></span>
+        </button>
+      </div>
+
+      <button id="home-start-btn" class="btn btn-primary btn-full home-cta"></button>
+
+      <div class="home-footer">
+        <button id="home-stats-btn" class="footer-btn">
+          <span class="footer-icon">📊</span>
+          <span data-i18n="statistics"></span>
+        </button>
+        <div id="home-streak" class="streak-display">
+          <span class="streak-icon">🔥</span>
+          <span id="home-streak-count">0</span>
+          <span data-i18n="days_in_a_row"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ───── PRACTICE SCREEN ───── -->
+    <div id="screen-practice" class="screen" hidden>
+      <div class="screen-nav">
+        <button id="practice-back" class="btn-icon">←</button>
+        <span id="practice-progress" class="nav-progress"></span>
+        <span id="practice-level-badge" class="level-chip"></span>
+      </div>
+      <div class="progress-bar-track">
+        <div id="practice-progress-bar" class="progress-bar-fill" style="width:0%"></div>
+      </div>
+
+      <div id="practice-content" class="practice-content">
+        <!-- Dynamically rendered -->
+      </div>
+    </div>
+
+    <!-- ───── RESULTS SCREEN (Classic) ───── -->
+    <div id="screen-results" class="screen" hidden>
+      <div class="screen-nav">
+        <span id="results-nav-text" class="nav-progress"></span>
+      </div>
+
+      <div id="results-content" class="results-content">
+        <!-- Classic results rendered here -->
+      </div>
+
+      <div id="results-action-bar" class="action-bar">
+        <button class="action-btn" id="ra-listen">
+          <span class="action-icon">🔊</span>
+          <span class="action-label" data-i18n="listen_again"></span>
+        </button>
+        <button class="action-btn" id="ra-slow">
+          <span class="action-icon">🐢</span>
+          <span class="action-label" data-i18n="listen_slow"></span>
+        </button>
+        <button class="action-btn" id="ra-playback">
+          <span class="action-icon">🎧</span>
+          <span class="action-label" data-i18n="your_recording"></span>
+        </button>
+        <button class="action-btn action-btn-retry" id="ra-retry">
+          <span class="action-icon">↺</span>
+          <span class="action-label" data-i18n="retry"></span>
+        </button>
+        <button class="action-btn action-btn-next" id="ra-next">
+          <span class="action-icon">→</span>
+          <span id="ra-next-label" class="action-label"></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ───── NINJA MODE RESULTS ───── -->
+    <div id="screen-ninja" class="screen screen-ninja" hidden>
+      <div id="ninja-reference-text" class="ninja-ref-text"></div>
+      <div id="ninja-chain-counter" class="chain-counter" hidden>
+        <span id="ninja-chain-num">0</span>
+        <span id="ninja-chain-label" class="chain-label">×</span>
+      </div>
+      <div id="ninja-arena" class="ninja-arena">
+        <!-- Words animate here -->
+      </div>
+      <div id="ninja-floor" class="ninja-floor">
+        <!-- Failed words land here -->
+      </div>
+      <div id="ninja-summary" class="ninja-summary" hidden>
+        <!-- Summary after animation -->
+      </div>
+      <div id="ninja-action-bar" class="action-bar" hidden>
+        <button class="action-btn" id="na-listen">
+          <span class="action-icon">🔊</span>
+          <span class="action-label" data-i18n="listen_again"></span>
+        </button>
+        <button class="action-btn" id="na-slow">
+          <span class="action-icon">🐢</span>
+          <span class="action-label" data-i18n="listen_slow"></span>
+        </button>
+        <button class="action-btn" id="na-playback">
+          <span class="action-icon">🎧</span>
+          <span class="action-label" data-i18n="your_recording"></span>
+        </button>
+        <button class="action-btn action-btn-retry" id="na-retry">
+          <span class="action-icon">↺</span>
+          <span class="action-label" data-i18n="retry"></span>
+        </button>
+        <button class="action-btn action-btn-next" id="na-next">
+          <span class="action-icon">→</span>
+          <span id="na-next-label" class="action-label"></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ───── SESSION SUMMARY ───── -->
+    <div id="screen-session-summary" class="screen" hidden>
+      <div class="screen-nav">
+        <h2 id="ss-title" class="screen-nav-title" data-i18n="session_summary"></h2>
+      </div>
+      <div id="ss-content" class="summary-content"></div>
+    </div>
+
+    <!-- ───── STATISTICS ───── -->
+    <div id="screen-stats" class="screen" hidden>
+      <div class="screen-nav">
+        <button id="stats-back" class="btn-icon">←</button>
+        <h2 class="screen-nav-title" data-i18n="statistics"></h2>
+      </div>
+      <div id="stats-content" class="stats-content"></div>
+    </div>
+
+    <!-- ───── SETTINGS ───── -->
+    <div id="screen-settings" class="screen" hidden>
+      <div class="screen-nav">
+        <button id="settings-back" class="btn-icon">←</button>
+        <h2 class="screen-nav-title" data-i18n="settings_title"></h2>
+      </div>
+      <div id="settings-content" class="settings-content"></div>
+    </div>
+
+    <!-- ───── MODAL / DIALOG ───── -->
+    <div id="modal-overlay" class="modal-overlay" hidden>
+      <div id="modal-box" class="modal-box">
+        <h3 id="modal-title" class="modal-title"></h3>
+        <p id="modal-body" class="modal-body"></p>
+        <div class="modal-actions">
+          <button id="modal-cancel" class="btn btn-ghost"></button>
+          <button id="modal-confirm" class="btn btn-primary"></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ───── TOAST NOTIFICATION ───── -->
+    <div id="toast" class="toast" hidden></div>
+
+  </div><!-- /#app -->
+
+  <!-- Azure Speech SDK -->
+  <script src="https://aka.ms/csspeech/jsbrowserpackageraw" defer></script>
+
+  <!-- App -->
+  <script type="module" src="./app.js"></script>
+
+  <!-- Service Worker Registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(e => console.warn('SW:', e));
+      });
+    }
+  </script>
+</body>
+</html>
