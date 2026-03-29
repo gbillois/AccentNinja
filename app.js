@@ -404,6 +404,9 @@ function renderPracticeScreen() {
             <div class="p-words" id="p-words"></div>
           </div>
 
+          <!-- API error banner -->
+          <div class="p-error-banner hidden" id="p-error-banner"></div>
+
           <!-- Playback -->
           <div class="p-actions">
             <button class="btn btn-ghost btn-sm" id="replay-btn" style="display:none">
@@ -646,6 +649,32 @@ function showClassicResults(result) {
     wordsEl.innerHTML = `<span class="text-muted text-sm">"${esc(result.recognizedText)}"</span>`;
   } else {
     wordsEl.innerHTML = `<span class="text-muted text-sm">Aucun mot reconnu</span>`;
+  }
+
+  // API error banner (shown when score is 0 and an error code is available)
+  const errorBannerEl = document.getElementById('p-error-banner');
+  if (errorBannerEl) {
+    const errorCode = result.raw?.error;
+    if (result.pronScore === 0 && errorCode) {
+      const lang = state.settings?.language ?? 'fr';
+      let suggestion = '';
+      if (errorCode === 'NoMatch') {
+        suggestion = lang === 'en'
+          ? 'Speak louder and closer to the microphone, then try again.'
+          : 'Parlez plus fort et plus près du microphone, puis réessayez.';
+      } else {
+        suggestion = lang === 'en'
+          ? 'Check your microphone and API settings, then try again.'
+          : 'Vérifiez votre microphone et les paramètres API, puis réessayez.';
+      }
+      errorBannerEl.innerHTML = `
+        <span class="p-error-code">Code : ${esc(errorCode)}</span>
+        <span class="p-error-suggestion">${esc(suggestion)}</span>
+      `;
+      errorBannerEl.classList.remove('hidden');
+    } else {
+      errorBannerEl.classList.add('hidden');
+    }
   }
 
   // Replay button
