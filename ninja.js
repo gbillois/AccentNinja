@@ -727,6 +727,33 @@ export function playNinjaAnimation(container, result, options = {}) {
       spawnParticles(20, window.innerWidth / 2, window.innerHeight * 0.35 + 40);
     }
 
+    // Error code hint when score is 0 and no words were recognised
+    const apiError = result.raw?.error;
+    if (overallScore === 0 && !words.length && apiError) {
+      const hint = document.createElement('div');
+      const suggestion = apiError === 'NoMatch'
+        ? 'Speak louder / closer to the mic and retry'
+        : 'Check your microphone & API settings, then retry';
+      hint.style.cssText = `
+        position: fixed;
+        top: calc(35% + 70px);
+        left: 50%;
+        transform: translateX(-50%);
+        text-align: center;
+        z-index: 206;
+        pointer-events: none;
+      `;
+      hint.innerHTML = `
+        <div style="font-family:monospace;font-size:13px;color:${C.red};margin-bottom:4px;">Code: ${apiError}</div>
+        <div style="font-family:'Noto Sans',sans-serif;font-size:13px;color:${C.muted};">${suggestion}</div>
+      `;
+      overlay.appendChild(hint);
+      hint.animate([
+        { opacity: 0, transform: 'translateX(-50%) translateY(6px)' },
+        { opacity: 1, transform: 'translateX(-50%) translateY(0)' },
+      ], { duration: 300, easing: 'ease-out', fill: 'forwards' });
+    }
+
     await delay(300);
 
     // Word chips row

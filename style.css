@@ -1179,6 +1179,28 @@ input, select, textarea { font: inherit; color: inherit; }
   text-decoration: line-through;
 }
 
+/* API error banner */
+.p-error-banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-error-bg);
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+
+.p-error-code {
+  font-family: monospace;
+  font-weight: 600;
+  color: var(--color-error);
+}
+
+.p-error-suggestion {
+  color: var(--color-text-subtle);
+}
+
 /* Practice action buttons */
 .p-actions {
   display: flex;
