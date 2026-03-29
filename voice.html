@@ -31,6 +31,10 @@
     <h2>1) Azure Credentials</h2>
     <label for="speechKey">Speech API Key</label>
     <input id="speechKey" type="password" placeholder="Paste your Azure Speech key" autocomplete="off" />
+    <div class="actions" style="margin-top: .75rem;">
+      <button id="saveApiBtn" type="button">💾 Save API key securely</button>
+      <button id="clearApiBtn" type="button">🧹 Clear saved API key</button>
+    </div>
 
     <div class="row">
       <div>
@@ -95,6 +99,96 @@
 
     function saveValues() {
       fieldsToPersist.forEach((id) => localStorage.setItem(`accentninja_${id}`, $(id).value));
+    }
+
+    function toBase64(bytes) {
+      let str = "";
+      bytes.forEach((b) => (str += String.fromCharCode(b)));
+      return btoa(str);
+    }
+
+    function fromBase64(b64) {
+      const str = atob(b64);
+      return Uint8Array.from(str, (c) => c.charCodeAt(0));
+    }
+
+    async function deriveKey(passphrase, salt) {
+      const enc = new TextEncoder();
+      const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(passphrase), "PBKDF2", false, ["deriveKey"]);
+      return crypto.subtle.deriveKey(
+        { name: "PBKDF2", salt, iterations: 250000, hash: "SHA-256" },
+        keyMaterial,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["encrypt", "decrypt"]
+      );
+    }
+
+    async function saveApiKeySecurely() {
+      const speechKey = $("speechKey").value.trim();
+      if (!speechKey) {
+        setStatus("Enter an API key before saving.", true);
+        return;
+      }
+
+      if (!window.crypto?.subtle) {
+        setStatus("Secure key storage is not supported in this browser.", true);
+        return;
+      }
+
+      const passphrase = prompt("Create a passphrase to protect your saved API key:");
+      if (!passphrase) {
+        setStatus("Save canceled. API key was not stored.", true);
+        return;
+      }
+
+      const enc = new TextEncoder();
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const key = await deriveKey(passphrase, salt);
+      const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(speechKey));
+
+      localStorage.setItem(
+        "accentninja_api_key_encrypted",
+        JSON.stringify({
+          v: 1,
+          iv: toBase64(iv),
+          salt: toBase64(salt),
+          data: toBase64(new Uint8Array(ciphertext))
+        })
+      );
+      setStatus("API key saved securely to this browser.");
+    }
+
+    async function loadApiKeySecurely() {
+      const raw = localStorage.getItem("accentninja_api_key_encrypted");
+      if (!raw) return;
+
+      try {
+        const { iv, salt, data } = JSON.parse(raw);
+        const passphrase = prompt("Enter passphrase to unlock saved API key:");
+        if (!passphrase) {
+          setStatus("Saved key found. Unlock canceled.");
+          return;
+        }
+
+        const key = await deriveKey(passphrase, fromBase64(salt));
+        const plaintext = await crypto.subtle.decrypt(
+          { name: "AES-GCM", iv: fromBase64(iv) },
+          key,
+          fromBase64(data)
+        );
+
+        $("speechKey").value = new TextDecoder().decode(plaintext);
+        setStatus("Saved API key unlocked.");
+      } catch (err) {
+        setStatus("Could not unlock saved API key. Passphrase may be incorrect.", true);
+      }
+    }
+
+    function clearSavedApiKey() {
+      localStorage.removeItem("accentninja_api_key_encrypted");
+      setStatus("Saved API key removed from this browser.");
     }
 
     function setStatus(text, isError = false) {
@@ -197,7 +291,10 @@
     }
 
     $("startBtn").addEventListener("click", runAssessment);
+    $("saveApiBtn").addEventListener("click", () => saveApiKeySecurely().catch((err) => setStatus(`Failed to save API key: ${err.message}`, true)));
+    $("clearApiBtn").addEventListener("click", clearSavedApiKey);
     loadSavedValues();
+    loadApiKeySecurely().catch((err) => setStatus(`Failed to load saved API key: ${err.message}`, true));
   </script>
 </body>
 </html>
