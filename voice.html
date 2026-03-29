@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AccentNinja - Voice Pronunciation Test</title>
+  <style>
+    :root { font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin: 2rem auto; max-width: 900px; line-height: 1.45; color: #1f2937; padding: 0 1rem; }
+    h1 { margin-bottom: .4rem; }
+    .card { border: 1px solid #d1d5db; border-radius: 12px; padding: 1rem; margin-bottom: 1rem; background: #fff; }
+    label { display: block; margin-top: .6rem; font-weight: 600; }
+    input, textarea, select, button { width: 100%; box-sizing: border-box; font: inherit; padding: .6rem; margin-top: .25rem; border: 1px solid #cbd5e1; border-radius: 8px; }
+    textarea { min-height: 90px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+    .actions { display: flex; gap: .75rem; }
+    .actions button { width: auto; min-width: 150px; cursor: pointer; }
+    .status { font-weight: 600; margin: .5rem 0; }
+    .scores { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: .5rem; }
+    .score { border: 1px solid #e5e7eb; border-radius: 10px; padding: .75rem; background: #f8fafc; }
+    pre { white-space: pre-wrap; background: #0b1020; color: #d1e7ff; padding: .8rem; border-radius: 10px; overflow-x: auto; }
+    .muted { color: #6b7280; font-size: .92rem; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/microsoft-cognitiveservices-speech-sdk@latest/distrib/browser/microsoft.cognitiveservices.speech.sdk.bundle-min.js"></script>
+</head>
+<body>
+  <h1>AccentNinja - voice.html</h1>
+  <p class="muted">This page captures your microphone audio and calls Azure Pronunciation Assessment (via Speech SDK).</p>
+
+  <div class="card">
+    <h2>1) Azure Credentials</h2>
+    <label for="speechKey">Speech API Key</label>
+    <input id="speechKey" type="password" placeholder="Paste your Azure Speech key" autocomplete="off" />
+
+    <div class="row">
+      <div>
+        <label for="speechRegion">Speech Region</label>
+        <input id="speechRegion" type="text" value="eastus" placeholder="e.g. eastus" />
+      </div>
+      <div>
+        <label for="locale">Learning locale</label>
+        <input id="locale" type="text" value="en-US" placeholder="e.g. en-US" />
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>2) Assessment Setup</h2>
+    <label for="referenceText">Reference text (scripted assessment)</label>
+    <textarea id="referenceText">The quick brown fox jumps over the lazy dog.</textarea>
+
+    <div class="row">
+      <div>
+        <label for="gradingSystem">Grading system</label>
+        <select id="gradingSystem">
+          <option value="HundredMark" selected>HundredMark (0-100)</option>
+          <option value="FivePoint">FivePoint (0-5)</option>
+        </select>
+      </div>
+      <div>
+        <label for="granularity">Granularity</label>
+        <select id="granularity">
+          <option value="Phoneme" selected>Phoneme</option>
+          <option value="Word">Word</option>
+          <option value="FullText">FullText</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="actions" style="margin-top: 1rem;">
+      <button id="startBtn">🎤 Start recording + assess</button>
+    </div>
+    <p id="status" class="status">Idle</p>
+  </div>
+
+  <div class="card">
+    <h2>3) Feedback</h2>
+    <div id="scores" class="scores"></div>
+    <h3>Recognized text</h3>
+    <pre id="recognizedText">(none)</pre>
+    <h3>Raw JSON result</h3>
+    <pre id="rawJson">(none)</pre>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const fieldsToPersist = ["speechRegion", "locale", "referenceText", "gradingSystem", "granularity"];
+
+    function loadSavedValues() {
+      fieldsToPersist.forEach((id) => {
+        const saved = localStorage.getItem(`accentninja_${id}`);
+        if (saved !== null) $(id).value = saved;
+      });
+    }
+
+    function saveValues() {
+      fieldsToPersist.forEach((id) => localStorage.setItem(`accentninja_${id}`, $(id).value));
+    }
+
+    function setStatus(text, isError = false) {
+      const status = $("status");
+      status.textContent = text;
+      status.style.color = isError ? "#b91c1c" : "#111827";
+    }
+
+    function renderScores(pa) {
+      const scores = [
+        ["Pronunciation", pa?.PronScore],
+        ["Accuracy", pa?.AccuracyScore],
+        ["Fluency", pa?.FluencyScore],
+        ["Completeness", pa?.CompletenessScore],
+        ["Prosody", pa?.ProsodyScore]
+      ];
+      $("scores").innerHTML = scores
+        .filter(([, v]) => v !== undefined)
+        .map(([k, v]) => `<div class="score"><strong>${k}</strong><div>${Number(v).toFixed(2)}</div></div>`)
+        .join("");
+    }
+
+    async function runAssessment() {
+      const speechKey = $("speechKey").value.trim();
+      const speechRegion = $("speechRegion").value.trim();
+      const locale = $("locale").value.trim();
+      const referenceText = $("referenceText").value.trim();
+      const gradingSystem = $("gradingSystem").value;
+      const granularity = $("granularity").value;
+
+      if (!speechKey || !speechRegion || !locale || !referenceText) {
+        setStatus("Please provide key, region, locale, and reference text.", true);
+        return;
+      }
+
+      saveValues();
+      setStatus("Requesting microphone access...");
+      $("startBtn").disabled = true;
+      $("recognizedText").textContent = "(waiting...)";
+      $("rawJson").textContent = "(waiting...)";
+      $("scores").innerHTML = "";
+
+      try {
+        const sdk = window.SpeechSDK;
+        if (!sdk) throw new Error("Speech SDK not loaded.");
+
+        const speechConfig = sdk.SpeechConfig.fromSubscription(speechKey, speechRegion);
+        speechConfig.speechRecognitionLanguage = locale;
+
+        const audioConfig = sdk.AudioConfig.fromDefaultMicrophoneInput();
+        const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
+
+        const pronConfig = new sdk.PronunciationAssessmentConfig(
+          referenceText,
+          sdk.PronunciationAssessmentGradingSystem[gradingSystem],
+          sdk.PronunciationAssessmentGranularity[granularity],
+          true
+        );
+        pronConfig.enableProsodyAssessment = true;
+        pronConfig.applyTo(recognizer);
+
+        setStatus("Listening... Speak now.");
+
+        recognizer.recognizeOnceAsync(
+          (result) => {
+            try {
+              const jsonResult = result.properties.getProperty(sdk.PropertyId.SpeechServiceResponse_JsonResult);
+              $("recognizedText").textContent = result.text || "(no text)";
+              $("rawJson").textContent = jsonResult || "(no JSON result)";
+
+              if (jsonResult) {
+                const parsed = JSON.parse(jsonResult);
+                const nbest0 = parsed?.NBest?.[0];
+                const pa = nbest0?.PronunciationAssessment;
+                renderScores(pa);
+              }
+
+              if (result.reason === sdk.ResultReason.RecognizedSpeech) {
+                setStatus("Assessment completed.");
+              } else {
+                setStatus(`Completed with reason: ${result.reason}.`, true);
+              }
+            } catch (innerErr) {
+              setStatus(`Failed to parse assessment result: ${innerErr.message}`, true);
+            } finally {
+              recognizer.close();
+              $("startBtn").disabled = false;
+            }
+          },
+          (err) => {
+            setStatus(`Recognition error: ${err}`, true);
+            recognizer.close();
+            $("startBtn").disabled = false;
+          }
+        );
+      } catch (err) {
+        setStatus(`Setup error: ${err.message}`, true);
+        $("startBtn").disabled = false;
+      }
+    }
+
+    $("startBtn").addEventListener("click", runAssessment);
+    loadSavedValues();
+  </script>
+</body>
+</html>
