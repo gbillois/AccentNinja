@@ -54,22 +54,67 @@ function playSetupTone(audioCtx) {
 
 function playSwoosh(audioCtx) {
   try {
-    const osc      = audioCtx.createOscillator();
-    const filter   = audioCtx.createBiquadFilter();
-    const gain     = audioCtx.createGain();
+    // Sharp, fast sweep — like a blade cutting air
+    const osc    = audioCtx.createOscillator();
+    const filter = audioCtx.createBiquadFilter();
+    const gain   = audioCtx.createGain();
     osc.connect(filter);
     filter.connect(gain);
     gain.connect(audioCtx.destination);
     osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(800, audioCtx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(200, audioCtx.currentTime + 0.1);
+    osc.frequency.setValueAtTime(1400, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(120, audioCtx.currentTime + 0.07);
     filter.type            = 'bandpass';
-    filter.frequency.value = 1000;
-    filter.Q.value         = 0.5;
-    gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+    filter.frequency.value = 2000;
+    filter.Q.value         = 0.7;
+    gain.gain.setValueAtTime(0.35, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.07);
     osc.start(audioCtx.currentTime);
-    osc.stop(audioCtx.currentTime + 0.1);
+    osc.stop(audioCtx.currentTime + 0.07);
+  } catch (_) {}
+}
+
+// Crispy high-frequency slice impact
+function playSliceImpact(audioCtx) {
+  try {
+    const bufferSize = Math.floor(audioCtx.sampleRate * 0.05);
+    const buffer     = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+    const data       = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 1.5);
+    }
+    const src    = audioCtx.createBufferSource();
+    src.buffer   = buffer;
+    const filter = audioCtx.createBiquadFilter();
+    filter.type            = 'highpass';
+    filter.frequency.value = 4000;
+    const gain   = audioCtx.createGain();
+    gain.gain.setValueAtTime(0.45, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(audioCtx.destination);
+    src.start();
+  } catch (_) {}
+}
+
+// Metallic ring — resonant blade shimmer after impact
+function playMetalShing(audioCtx) {
+  try {
+    const t = audioCtx.currentTime;
+    [3200, 5400, 8100].forEach((freq, i) => {
+      const osc  = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, t + i * 0.005);
+      gain.gain.linearRampToValueAtTime(0.15 - i * 0.04, t + i * 0.005 + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35 - i * 0.05);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(t + i * 0.005);
+      osc.stop(t + 0.4);
+    });
   } catch (_) {}
 }
 
@@ -87,6 +132,24 @@ function playThud(audioCtx) {
     osc.start(audioCtx.currentTime);
     osc.stop(audioCtx.currentTime + 0.15);
   } catch (_) {}
+}
+
+// Brief full-screen color flash for impact feedback
+function flashScreen(color, maxOpacity, duration) {
+  const flash = document.createElement('div');
+  flash.style.cssText = `
+    position: fixed;
+    inset: 0;
+    background: ${color};
+    z-index: 250;
+    pointer-events: none;
+    opacity: ${maxOpacity};
+  `;
+  document.body.appendChild(flash);
+  flash.animate([
+    { opacity: maxOpacity },
+    { opacity: 0 },
+  ], { duration, easing: 'ease-out', fill: 'forwards' }).onfinish = () => flash.remove();
 }
 
 // ===========================================================================
@@ -119,17 +182,21 @@ function scoreVerdict(score) {
   return 'Incorrect';
 }
 
-// Spawn fixed-position particles at (cx, cy)
-function spawnParticles(count, cx, cy) {
-  const colors   = [C.red, C.gold, C.text];
+// Spawn fixed-position particles at (cx, cy).
+// Pass `color` to tint the burst (optional — defaults to mixed palette).
+function spawnParticles(count, cx, cy, color) {
+  const colors   = color ? [color, C.goldBright, C.text] : [C.red, C.gold, C.text];
   const elements = [];
   for (let i = 0; i < count; i++) {
-    const el = document.createElement('div');
-    const sz = 4 + Math.random() * 4;
+    const el         = document.createElement('div');
+    const elongated  = Math.random() > 0.55;
+    const sz         = 3 + Math.random() * 5;
+    const w          = elongated ? sz * 0.5 : sz;
+    const h          = elongated ? sz * 2.5 : sz;
     el.style.cssText = `
       position: fixed;
-      width: ${sz}px;
-      height: ${sz}px;
+      width: ${w}px;
+      height: ${h}px;
       border-radius: 50%;
       background: ${colors[Math.floor(Math.random() * colors.length)]};
       left: ${cx}px;
@@ -141,19 +208,79 @@ function spawnParticles(count, cx, cy) {
     elements.push(el);
 
     const angle = Math.random() * Math.PI * 2;
-    const dist  = 30 + Math.random() * 60;
+    const dist  = 45 + Math.random() * 95;
     const dx    = Math.cos(angle) * dist;
-    const dy    = Math.sin(angle) * dist;
-    const rot   = (Math.random() - 0.5) * 720;
+    // Add downward gravity bias to the y component
+    const dy    = Math.sin(angle) * dist + dist * 0.35;
+    const rot   = (Math.random() - 0.5) * 1080;
 
     const anim = el.animate([
       { transform: 'translate(0,0) rotate(0deg) scale(1)', opacity: 1 },
       { transform: `translate(${dx}px,${dy}px) rotate(${rot}deg) scale(0)`, opacity: 0 },
-    ], { duration: 400, easing: 'ease-out', fill: 'forwards' });
+    ], { duration: 450 + Math.random() * 180, easing: 'ease-out', fill: 'forwards' });
 
     anim.onfinish = () => el.remove();
   }
   return elements;
+}
+
+// Bright metallic sparkles — 4-pointed star shapes
+function spawnSparkles(count, cx, cy) {
+  for (let i = 0; i < count; i++) {
+    const el  = document.createElement('div');
+    const sz  = 5 + Math.random() * 9;
+    const col = Math.random() > 0.4 ? '#ffffff' : (Math.random() > 0.5 ? '#c8d4f0' : '#e0e8ff');
+    el.style.cssText = `
+      position: fixed;
+      left: ${cx}px;
+      top: ${cy}px;
+      width: ${sz}px;
+      height: ${sz}px;
+      background: ${col};
+      clip-path: polygon(50% 0%, 58% 40%, 100% 50%, 58% 60%, 50% 100%, 42% 60%, 0% 50%, 42% 40%);
+      pointer-events: none;
+      z-index: 212;
+      box-shadow: 0 0 4px ${col};
+    `;
+    document.body.appendChild(el);
+    const angle = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+    const dist  = 25 + Math.random() * 80;
+    const dx    = Math.cos(angle) * dist;
+    const dy    = Math.sin(angle) * dist + dist * 0.2;
+    const rot   = (Math.random() - 0.5) * 540;
+    const dur   = 300 + Math.random() * 200;
+    el.animate([
+      { transform: `translate(0,0) rotate(0deg) scale(1)`, opacity: 1 },
+      { transform: `translate(${dx * 0.5}px,${dy * 0.4}px) rotate(${rot * 0.5}deg) scale(1.2)`, opacity: 1, offset: 0.25 },
+      { transform: `translate(${dx}px,${dy}px) rotate(${rot}deg) scale(0)`, opacity: 0 },
+    ], { duration: dur, easing: 'ease-out', fill: 'forwards' }).onfinish = () => el.remove();
+  }
+}
+
+// Expanding ring "juice splatter" at impact point
+function spawnJuiceSplatter(cx, cy, color) {
+  for (let i = 0; i < 2; i++) {
+    const ring = document.createElement('div');
+    const base = 18 + i * 10;
+    ring.style.cssText = `
+      position: fixed;
+      left: ${cx - base / 2}px;
+      top:  ${cy - base / 2}px;
+      width: ${base}px;
+      height: ${base}px;
+      border-radius: 50%;
+      border: ${2.5 - i * 0.5}px solid ${color};
+      box-shadow: 0 0 10px ${color};
+      pointer-events: none;
+      z-index: 211;
+    `;
+    document.body.appendChild(ring);
+    const anim = ring.animate([
+      { transform: 'scale(1)', opacity: 0.85 },
+      { transform: `scale(${3.5 + i})`, opacity: 0 },
+    ], { duration: 320 + i * 60, easing: 'ease-out', delay: i * 40, fill: 'forwards' });
+    anim.onfinish = () => ring.remove();
+  }
 }
 
 // Particles that fall from a given y (for FLAWLESS combo)
@@ -361,107 +488,189 @@ export function playNinjaAnimation(container, result, options = {}) {
     setTimeout(() => label.remove(), 900);
   }
 
-  // Screen shake
-  function shakeScreen() {
+  // Screen shake — magnitude scales the displacement in px
+  function shakeScreen(mag = 4) {
     overlay.animate([
-      { transform: 'translateX(0)' },
-      { transform: 'translateX(3px)' },
-      { transform: 'translateX(-3px)' },
-      { transform: 'translateX(3px)' },
-      { transform: 'translateX(-3px)' },
-      { transform: 'translateX(3px)' },
-      { transform: 'translateX(0)' },
-    ], { duration: 200, easing: 'linear' });
+      { transform: 'translate(0,0)' },
+      { transform: `translate(${mag}px,${-mag * 0.5}px)` },
+      { transform: `translate(${-mag}px,${mag * 0.5}px)` },
+      { transform: `translate(${mag * 0.7}px,${mag * 0.3}px)` },
+      { transform: `translate(${-mag * 0.5}px,${-mag * 0.4}px)` },
+      { transform: `translate(${mag * 0.3}px,0)` },
+      { transform: 'translate(0,0)' },
+    ], { duration: 220, easing: 'linear' });
   }
 
   // -----------------------------------------------------------------------
-  // Animate a single word element
+  // Animate a single word element  (Fruit Ninja style)
   // -----------------------------------------------------------------------
   async function animateWord(wordData, index) {
     const accuracy   = wordData.accuracyScore || 0;
     const isCorrect  = accuracy >= 70;
-    const xOff       = (Math.random() - 0.5) * 120;
+
+    // Parabolic arc parameters
+    const hw         = window.innerWidth / 2;
+    const startXOff  = (Math.random() - 0.5) * 180;
+    const endXOff    = (Math.random() - 0.5) * 130;
+    const midXOff    = (startXOff + endXOff) / 2 + (Math.random() - 0.5) * 30;
+    const startRot   = (Math.random() - 0.5) * 22;
     const slashZoneY = window.innerHeight * 0.45;
 
-    // Create word element
     const wordEl = document.createElement('div');
     wordEl.textContent = wordData.word || '';
     wordEl.style.cssText = `
       position: fixed;
-      left: calc(50% + ${xOff}px);
-      top: ${window.innerHeight + 60}px;
-      transform: translateX(-50%);
+      left: ${hw + startXOff}px;
+      top: 0;
+      transform: translateY(${window.innerHeight + 80}px) translateX(-50%) rotate(${startRot}deg);
       font-family: 'Dela Gothic One', cursive;
       font-size: ${fontSize};
-      color: ${C.text};
+      color: #b8bec8;
+      text-shadow:
+        0 1px 0 rgba(255,255,255,0.45),
+        0 -1px 0 rgba(0,0,0,0.35),
+        0 0 10px rgba(180,195,225,0.4);
       z-index: 203;
       pointer-events: none;
       white-space: nowrap;
     `;
     overlay.appendChild(wordEl);
 
-    // Rise animation (1200ms ease-out)
+    // Parabolic rise: arc laterally while climbing, slight overshoot at top
     const riseAnim = wordEl.animate([
-      { top: `${window.innerHeight + 60}px` },
-      { top: `${slashZoneY}px` },
-    ], { duration: 1200, easing: 'ease-out', fill: 'forwards' });
+      {
+        left:      `${hw + startXOff}px`,
+        transform: `translateY(${window.innerHeight + 80}px) translateX(-50%) rotate(${startRot}deg)`,
+      },
+      {
+        left:      `${hw + midXOff}px`,
+        transform: `translateY(${slashZoneY - 16}px) translateX(-50%) rotate(${startRot * 0.15}deg)`,
+        offset: 0.87,
+      },
+      {
+        left:      `${hw + endXOff}px`,
+        transform: `translateY(${slashZoneY}px) translateX(-50%) rotate(0deg)`,
+      },
+    ], { duration: 900, easing: 'cubic-bezier(0.15, 0.85, 0.45, 1)', fill: 'forwards' });
 
     await riseAnim.finished;
 
     if (isCorrect) {
       // -------- CORRECT --------
       playSwoosh(audioCtx);
+      playSliceImpact(audioCtx);
 
-      // Get position after rise
       const rect = wordEl.getBoundingClientRect();
       const cx   = rect.left + rect.width / 2;
       const cy   = rect.top  + rect.height / 2;
 
-      // SVG slash
-      const svgNS = 'http://www.w3.org/2000/svg';
-      const svgEl = document.createElementNS(svgNS, 'svg');
-      const w     = rect.width + 20;
-      const h     = rect.height + 10;
-      svgEl.setAttribute('width',  w);
-      svgEl.setAttribute('height', h);
-      svgEl.style.cssText = `
+      // Immediate screen flash — white like a blade catching light
+      flashScreen('#e8f0ff', 0.28, 80);
+
+      // Metallic blade SVG sweeping through the word
+      const svgNS    = 'http://www.w3.org/2000/svg';
+      const sw       = rect.width + 32;
+      const sh       = rect.height + 20;
+      const slashDuration = isSingle ? 160 : 110;
+
+      // Wrapper div clips the SVG as it sweeps in
+      const bladeWrapper = document.createElement('div');
+      bladeWrapper.style.cssText = `
         position: fixed;
-        left: ${rect.left - 10}px;
-        top:  ${rect.top  - 5}px;
+        left: ${rect.left - 16}px;
+        top:  ${rect.top  - 10}px;
+        width: ${sw}px;
+        height: ${sh}px;
+        overflow: hidden;
         z-index: 204;
         pointer-events: none;
-        filter: drop-shadow(0 0 12px rgba(196,164,74,0.6));
+        filter: drop-shadow(0 0 14px rgba(200,220,255,0.9))
+                drop-shadow(0 0 5px rgba(255,255,255,0.95));
       `;
+      overlay.appendChild(bladeWrapper);
 
-      const path    = document.createElementNS(svgNS, 'path');
-      const variant = slashVariant % 2;
+      const svgEl = document.createElementNS(svgNS, 'svg');
+      svgEl.setAttribute('width', sw);
+      svgEl.setAttribute('height', sh);
+      svgEl.style.cssText = `position: absolute; left: 0; top: 0; overflow: visible;`;
+      bladeWrapper.appendChild(svgEl);
+
+      const variant  = slashVariant % 2;
       slashVariant++;
-      const d = variant === 0
-        ? `M 0,5 Q ${w * 0.4},${h * 0.5} ${w},${h - 5}`
-        : `M ${w},5 Q ${w * 0.6},${h * 0.5} 0,${h - 5}`;
-      path.setAttribute('d', d);
-      path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', C.text);
-      path.setAttribute('stroke-width', '2.5');
-      path.setAttribute('stroke-linecap', 'round');
+      const gradId   = `bg${Date.now()}`;
 
-      svgEl.appendChild(path);
-      overlay.appendChild(svgEl);
+      // Metallic gradient (dark→silver→bright→silver→dark, vertical)
+      const defs = document.createElementNS(svgNS, 'defs');
+      const grad = document.createElementNS(svgNS, 'linearGradient');
+      grad.setAttribute('id', gradId);
+      grad.setAttribute('x1', '0'); grad.setAttribute('y1', '0');
+      grad.setAttribute('x2', '0'); grad.setAttribute('y2', '1');
+      [
+        ['0%',   '#304050', '1'],
+        ['20%',  '#7888a0', '1'],
+        ['38%',  '#c8d4e8', '1'],
+        ['50%',  '#f4f8ff', '1'],  // bright edge
+        ['62%',  '#b0bcd0', '1'],
+        ['80%',  '#606878', '1'],
+        ['100%', '#202830', '1'],
+      ].forEach(([off, col, op]) => {
+        const s = document.createElementNS(svgNS, 'stop');
+        s.setAttribute('offset', off);
+        s.setAttribute('stop-color', col);
+        s.setAttribute('stop-opacity', op);
+        grad.appendChild(s);
+      });
+      defs.appendChild(grad);
+      svgEl.appendChild(defs);
 
-      // Animate stroke-dashoffset
-      const pathLen = path.getTotalLength ? path.getTotalLength() : 120;
-      path.style.strokeDasharray  = pathLen;
-      path.style.strokeDashoffset = pathLen;
+      // Blade shape — leaf/blade cross-section, tip pointing in slash direction
+      const bh = sh * 0.38;  // half blade thickness
+      let bodyD, edgeD;
+      if (variant === 0) {
+        // Tip points right
+        bodyD = `M 0,${sh*0.5} L ${sw*0.04},${sh*0.5-bh*0.55} Q ${sw*0.45},${sh*0.5-bh} ${sw*0.9},${sh*0.5-bh*0.45} L ${sw},${sh*0.5} L ${sw*0.9},${sh*0.5+bh*0.45} Q ${sw*0.45},${sh*0.5+bh} ${sw*0.04},${sh*0.5+bh*0.55} Z`;
+        edgeD = `M 0,${sh*0.5} L ${sw*0.04},${sh*0.5-bh*0.55} Q ${sw*0.45},${sh*0.5-bh} ${sw*0.9},${sh*0.5-bh*0.45} L ${sw},${sh*0.5}`;
+      } else {
+        // Tip points left
+        bodyD = `M ${sw},${sh*0.5} L ${sw*0.96},${sh*0.5-bh*0.55} Q ${sw*0.55},${sh*0.5-bh} ${sw*0.1},${sh*0.5-bh*0.45} L 0,${sh*0.5} L ${sw*0.1},${sh*0.5+bh*0.45} Q ${sw*0.55},${sh*0.5+bh} ${sw*0.96},${sh*0.5+bh*0.55} Z`;
+        edgeD = `M ${sw},${sh*0.5} L ${sw*0.96},${sh*0.5-bh*0.55} Q ${sw*0.55},${sh*0.5-bh} ${sw*0.1},${sh*0.5-bh*0.45} L 0,${sh*0.5}`;
+      }
 
-      const slashDuration = isSingle ? 200 : 150;
-      path.animate([
-        { strokeDashoffset: pathLen },
-        { strokeDashoffset: 0 },
-      ], { duration: slashDuration, easing: 'ease-out', fill: 'forwards' });
+      const bladeBody = document.createElementNS(svgNS, 'path');
+      bladeBody.setAttribute('d', bodyD);
+      bladeBody.setAttribute('fill', `url(#${gradId})`);
+      bladeBody.setAttribute('opacity', '0.92');
+      svgEl.appendChild(bladeBody);
+
+      // Bright edge highlight (the cutting edge)
+      const bladeEdge = document.createElementNS(svgNS, 'path');
+      bladeEdge.setAttribute('d', edgeD);
+      bladeEdge.setAttribute('fill', 'none');
+      bladeEdge.setAttribute('stroke', '#ffffff');
+      bladeEdge.setAttribute('stroke-width', '1.5');
+      bladeEdge.setAttribute('stroke-linecap', 'round');
+      bladeEdge.setAttribute('opacity', '0.95');
+      svgEl.appendChild(bladeEdge);
+
+      // Slide blade across — enter from the side, clip reveals it sweeping through
+      const startX = variant === 0 ? -sw : sw;
+      svgEl.animate([
+        { transform: `translateX(${startX}px)` },
+        { transform: 'translateX(0px)' },
+      ], { duration: slashDuration, easing: 'cubic-bezier(0.1, 0.7, 0.3, 1)', fill: 'forwards' });
 
       await delay(slashDuration);
 
-      // Word split effect
+      // Metallic ring sound — steel shimmer
+      playMetalShing(audioCtx);
+
+      // Juice splatter ring — silver/chrome
+      spawnJuiceSplatter(cx, cy, '#c0ccd8');
+
+      // Star sparkles flying off the cut
+      spawnSparkles(12, cx, cy);
+
+      // Hide original, spawn halves that arc out then fall with gravity
       wordEl.style.visibility = 'hidden';
 
       const halfL = document.createElement('div');
@@ -487,41 +696,47 @@ export function playNinjaAnimation(container, result, options = {}) {
       halfL.style.clipPath = 'polygon(0 0, 50% 0, 50% 100%, 0 100%)';
       halfR.style.clipPath = 'polygon(50% 0, 100% 0, 100% 100%, 50% 100%)';
 
+      // Fly outward (burst) then fall with gravity — classic Fruit Ninja arc
       halfL.animate([
-        { transform: 'translate(0,0) rotate(0deg)', opacity: 1 },
-        { transform: 'translate(-40px,-20px) rotate(-15deg)', opacity: 0 },
-      ], { duration: 600, easing: 'ease-out', fill: 'forwards' }).onfinish = () => halfL.remove();
+        { transform: 'translate(0,0) rotate(0deg)',            opacity: 1 },
+        { transform: 'translate(-68px,-42px) rotate(-20deg)',  opacity: 1, offset: 0.30 },
+        { transform: 'translate(-95px, 100px) rotate(-32deg)', opacity: 0 },
+      ], { duration: 680, easing: 'ease-in', fill: 'forwards' }).onfinish = () => halfL.remove();
 
       halfR.animate([
-        { transform: 'translate(0,0) rotate(0deg)', opacity: 1 },
-        { transform: 'translate(40px,-25px) rotate(12deg)', opacity: 0 },
-      ], { duration: 600, easing: 'ease-out', fill: 'forwards' }).onfinish = () => halfR.remove();
+        { transform: 'translate(0,0) rotate(0deg)',          opacity: 1 },
+        { transform: 'translate(68px,-46px) rotate(20deg)',  opacity: 1, offset: 0.30 },
+        { transform: 'translate(90px, 95px) rotate(30deg)',  opacity: 0 },
+      ], { duration: 680, easing: 'ease-in', fill: 'forwards' }).onfinish = () => halfR.remove();
 
-      // Particles at slash center
-      const particleCount = isSingle ? 15 : 10;
-      spawnParticles(particleCount, cx, cy);
+      // Enhanced particle burst
+      const particleCount = isSingle ? 22 : 15;
+      spawnParticles(particleCount, cx, cy, C.gold);
 
-      // Score flash
+      // Score flash — bigger, glowing, pops in then drifts up
       const scoreFlash = document.createElement('div');
       scoreFlash.textContent = `${Math.round(accuracy)}%`;
+      const sCol = scoreColor(accuracy);
       scoreFlash.style.cssText = `
         position: fixed;
         left: ${cx}px;
-        top: ${cy}px;
+        top: ${cy - 8}px;
         transform: translateX(-50%);
-        font-family: 'Noto Sans', sans-serif;
-        font-weight: 600;
-        font-size: 16px;
-        color: ${C.jade};
+        font-family: 'Dela Gothic One', cursive;
+        font-size: 22px;
+        color: ${sCol};
+        text-shadow: 0 0 12px ${sCol};
         z-index: 210;
         pointer-events: none;
       `;
       overlay.appendChild(scoreFlash);
 
       scoreFlash.animate([
-        { opacity: 1, transform: 'translateX(-50%) translateY(0)' },
-        { opacity: 0, transform: 'translateX(-50%) translateY(-15px)' },
-      ], { duration: 500, easing: 'ease-out', fill: 'forwards' }).onfinish = () => scoreFlash.remove();
+        { opacity: 0, transform: 'translateX(-50%) translateY(4px) scale(1.4)' },
+        { opacity: 1, transform: 'translateX(-50%) translateY(0) scale(1)', offset: 0.18 },
+        { opacity: 1, transform: 'translateX(-50%) translateY(-10px) scale(1)', offset: 0.65 },
+        { opacity: 0, transform: 'translateX(-50%) translateY(-30px) scale(0.85)' },
+      ], { duration: 620, easing: 'ease-out', fill: 'forwards' }).onfinish = () => scoreFlash.remove();
 
       // Update chain
       chainCount++;
@@ -530,45 +745,73 @@ export function playNinjaAnimation(container, result, options = {}) {
 
       // Combo labels
       if (consecutiveCorrect === 3) {
-        showComboLabel('3x CHAIN', C.gold, '24px', false);
-        shakeScreen();
+        showComboLabel('3× CHAIN', '#c0ccd8', '26px', false);
+        shakeScreen(4);
+        flashScreen('#c8d8f0', 0.15, 160);
       } else if (consecutiveCorrect === 5) {
-        showComboLabel('5x SHARP', C.goldBright, '28px', false);
+        showComboLabel('5× SHARP', '#e8f0ff', '30px', false);
+        shakeScreen(6);
+        flashScreen('#ffffff', 0.2, 160);
       } else if (consecutiveCorrect >= 7) {
-        showComboLabel('FLAWLESS', null, '32px', true);
-        spawnFallingParticles(15, 0);
+        showComboLabel('FLAWLESS', null, '36px', true);
+        shakeScreen(8);
+        flashScreen('#ffffff', 0.28, 200);
+        spawnFallingParticles(20, 0);
       }
 
-      // Cleanup slash after a moment
-      setTimeout(() => svgEl.remove(), 600);
-      setTimeout(() => wordEl.remove(), 650);
+      // Fade out blade wrapper
+      bladeWrapper.animate([
+        { opacity: 1 },
+        { opacity: 0 },
+      ], { duration: 200, delay: 120, easing: 'ease-out', fill: 'forwards' }).onfinish = () => bladeWrapper.remove();
+      setTimeout(() => wordEl.remove(), 750);
 
     } else {
       // -------- INCORRECT --------
 
-      // Color shift red
+      // Quick color shift to red
       wordEl.animate([
-        { color: C.text },
+        { color: '#b8bec8' },
         { color: C.red },
-      ], { duration: 200, easing: 'linear', fill: 'forwards' });
+      ], { duration: 140, easing: 'linear', fill: 'forwards' });
+      // Kill metallic text-shadow so red reads clearly
+      setTimeout(() => { wordEl.style.textShadow = 'none'; }, 80);
 
-      await delay(300);
+      // Wobble — word shakes as if trying to dodge the blade
+      await wordEl.animate([
+        { transform: `translateY(${slashZoneY}px) translateX(-50%) rotate(0deg)` },
+        { transform: `translateY(${slashZoneY}px) translateX(-50%) rotate(8deg)` },
+        { transform: `translateY(${slashZoneY}px) translateX(-50%) rotate(-8deg)` },
+        { transform: `translateY(${slashZoneY}px) translateX(-50%) rotate(5deg)` },
+        { transform: `translateY(${slashZoneY}px) translateX(-50%) rotate(0deg)` },
+      ], { duration: 230, easing: 'ease-in-out', fill: 'forwards' }).finished;
 
-      // Fall animation
-      const rotation = 5 + Math.random() * 10;
+      await delay(60);
+
+      // Red flash
+      flashScreen(C.red, 0.18, 160);
+
+      // Dramatic fall with lateral drift
+      const rotation  = 9 + Math.random() * 13;
       const signedRot = (Math.random() > 0.5 ? 1 : -1) * rotation;
+      const xDrift    = (Math.random() - 0.5) * 70;
 
       const fallAnim = wordEl.animate([
-        { top: `${slashZoneY}px`, transform: 'translateX(-50%) rotate(0deg)' },
-        { top: `${window.innerHeight + 60}px`, transform: `translateX(-50%) rotate(${signedRot}deg)` },
-      ], { duration: 600, easing: 'cubic-bezier(0.55,0,1,0.45)', fill: 'forwards' });
+        {
+          left:      `${hw + endXOff}px`,
+          transform: `translateY(${slashZoneY}px) translateX(-50%) rotate(0deg)`,
+        },
+        {
+          left:      `${hw + endXOff + xDrift}px`,
+          transform: `translateY(${window.innerHeight + 80}px) translateX(-50%) rotate(${signedRot}deg)`,
+        },
+      ], { duration: 540, easing: 'cubic-bezier(0.4, 0, 0.8, 0.6)', fill: 'forwards' });
 
       await fallAnim.finished;
 
-      // Play thud
       playThud(audioCtx);
 
-      // Create failed zone chip
+      // Failed zone chip
       const chip = document.createElement('div');
       chip.textContent = wordData.word || '';
       chip.style.cssText = `
@@ -584,14 +827,13 @@ export function playNinjaAnimation(container, result, options = {}) {
       `;
       failedZone.appendChild(chip);
 
-      // Bounce chip
       chip.animate([
-        { transform: 'translateY(0)' },
-        { transform: 'translateY(-20px)' },
-        { transform: 'translateY(0)' },
-        { transform: 'translateY(-8px)' },
-        { transform: 'translateY(0)' },
-      ], { duration: 500, easing: 'ease-out' });
+        { transform: 'translateY(0) scale(0.85)' },
+        { transform: 'translateY(-22px) scale(1.08)' },
+        { transform: 'translateY(0) scale(1)' },
+        { transform: 'translateY(-9px) scale(1)' },
+        { transform: 'translateY(0) scale(1)' },
+      ], { duration: 520, easing: 'ease-out' });
 
       // Worst phoneme label
       const phonemes = wordData.phonemes || [];
@@ -622,7 +864,6 @@ export function playNinjaAnimation(container, result, options = {}) {
 
       wordEl.remove();
 
-      // Reset consecutive
       consecutiveCorrect = 0;
       flashChainRed();
     }
@@ -640,8 +881,8 @@ export function playNinjaAnimation(container, result, options = {}) {
       if (i < words.length - 1) await delay(800); // 800ms launch interval between words
     }
 
-    // Wait for last word's full animation (rise 1200ms + slash/fall processing)
-    await delay(2700);
+    // Wait for last word's full animation (rise 900ms + slash/fall processing)
+    await delay(2400);
 
     runPhase3();
   }
