@@ -498,13 +498,16 @@ function computeWebSpeechResult(referenceText, recognizedText, confidence) {
     if (got === undefined) {
       words.push({ word: ref, accuracyScore: 0, errorType: 'Omission', phonemes: [] });
     } else if (ref === got) {
-      words.push({ word: ref, accuracyScore: conf * 100, errorType: 'None', phonemes: [] });
+      // Exact text match — cap at confidence level (not a guaranteed 100)
+      words.push({ word: ref, accuracyScore: Math.min(95, conf * 100), errorType: 'None', phonemes: [] });
     } else {
       const sim = stringSimilarity(ref, got);
+      // Apply quadratic penalty: similarity² makes partial matches score much lower
+      const penalizedSim = sim * sim;
       words.push({
         word: ref,
-        accuracyScore: sim * conf * 100,
-        errorType: sim > 0.6 ? 'Mispronunciation' : 'Omission',
+        accuracyScore: penalizedSim * conf * 100,
+        errorType: sim > 0.5 ? 'Mispronunciation' : 'Omission',
         phonemes: [],
       });
     }
@@ -515,26 +518,32 @@ function computeWebSpeechResult(referenceText, recognizedText, confidence) {
     words.push({ word: gotWords[i], accuracyScore: 0, errorType: 'Insertion', phonemes: [] });
   }
 
-  const correctCount = words.filter(w => w.errorType === 'None').length;
-  const accuracy = refWords.length > 0 ? (correctCount / refWords.length) * 100 : 0;
+  // Average word-level accuracy (accounts for mispronunciations, not just perfect matches)
+  const avgWordAccuracy = refWords.length > 0
+    ? words.filter(w => w.errorType !== 'Insertion').reduce((sum, w) => sum + w.accuracyScore, 0) / refWords.length
+    : 0;
   const completeness = refWords.length > 0
     ? Math.min(100, (gotWords.length / refWords.length) * 100)
     : 0;
 
-  // Map confidence to score bands per spec:
-  //   > 0.9 → Excellent (90-100), > 0.7 → Good (70-90), > 0.5 → Needs Work (50-70), ≤ 0.5 → Incorrect
-  let pronScore;
-  if (conf > 0.9)      pronScore = 90 + (conf - 0.9) * 100;
-  else if (conf > 0.7) pronScore = 70 + (conf - 0.7) * 100;
-  else if (conf > 0.5) pronScore = 50 + (conf - 0.5) * 100;
-  else                 pronScore = conf * 100;
-  pronScore = Math.min(100, Math.max(0, pronScore));
+  // Map confidence to score bands (stricter than before):
+  //   > 0.9 → 80-100, > 0.7 → 55-80, > 0.5 → 30-55, ≤ 0.5 → 0-30
+  let confScore;
+  if (conf > 0.9)      confScore = 80 + (conf - 0.9) * 200;
+  else if (conf > 0.7) confScore = 55 + (conf - 0.7) * 125;
+  else if (conf > 0.5) confScore = 30 + (conf - 0.5) * 125;
+  else                 confScore = conf * 60;
+  confScore = Math.min(100, Math.max(0, confScore));
+
+  // Blend confidence score with word-level accuracy so mispronunciations
+  // that the speech-to-text engine "forgives" still lower the overall score
+  const pronScore = Math.min(100, Math.max(0, confScore * 0.4 + avgWordAccuracy * 0.6));
 
   return {
     engine: 'web',
     pronScore,
-    accuracyScore:     Math.min(100, Math.max(0, accuracy)),
-    fluencyScore:      Math.min(100, Math.max(45, pronScore + 10)),
+    accuracyScore:     Math.min(100, Math.max(0, avgWordAccuracy)),
+    fluencyScore:      Math.min(100, Math.max(0, pronScore * 0.9)),
     completenessScore: Math.min(100, Math.max(0, completeness)),
     prosodyScore: null,
     recognizedText: recognizedText ?? '',
