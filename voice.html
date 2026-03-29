@@ -120,6 +120,8 @@
     const fieldsToPersist = ["speechRegion", "locale", "referenceText", "gradingSystem", "granularity", "speechKey"];
     let activeRecognizer = null;
     let sessionGuardTimer = null;
+    let isStopping = false;
+    let latestRecognizedText = "";
     const savedKeyStorageKey = "accentninja_speech_key_v1";
 
     function loadSavedValues() {
@@ -264,6 +266,8 @@
     }
 
     function resetUiForStart() {
+      isStopping = false;
+      latestRecognizedText = "";
       $("startBtn").disabled = true;
       $("stopBtn").disabled = false;
       $("recognizedText").textContent = "(waiting...)";
@@ -281,15 +285,20 @@
       $("stopBtn").disabled = true;
       setBusy(false);
       activeRecognizer = null;
+      isStopping = false;
     }
 
     function stopRecording() {
       if (!activeRecognizer) return;
+      if (isStopping) return;
+      isStopping = true;
+      $("stopBtn").disabled = true;
       setStatus("Stopping recording and waiting for results...");
       setBusy(true);
       activeRecognizer.stopContinuousRecognitionAsync(
         () => {
-          // Session stopped event finalizes UI.
+          setStatus("Recording stopped.");
+          finalizeUi();
         },
         (err) => {
           setStatus(`Stop error: ${err}`, true);
@@ -387,14 +396,33 @@
         pronConfig.enableProsodyAssessment = true;
         pronConfig.applyTo(recognizer);
 
+        recognizer.sessionStarted = () => {
+          setStatus("Microphone connected. Listening... Speak now.");
+        };
+
+        recognizer.recognizing = (_sender, event) => {
+          const partialText = event?.result?.text || "";
+          if (partialText) {
+            latestRecognizedText = partialText;
+            $("recognizedText").textContent = `${partialText} …`;
+          }
+        };
+
         recognizer.recognized = (_sender, event) => {
           try {
             const result = event.result;
             const jsonResult = result.properties.getProperty(sdk.PropertyId.SpeechServiceResponse_JsonResult);
-            $("recognizedText").textContent = result.text || "(no text)";
+            const recognizedText = result.text || latestRecognizedText || "(no text)";
+            latestRecognizedText = recognizedText;
+            $("recognizedText").textContent = recognizedText;
             $("rawJson").textContent = jsonResult || "(no JSON result)";
 
-            if (jsonResult) {
+            if (result.reason === sdk.ResultReason.NoMatch) {
+              setStatus("No speech recognized. Check mic permissions and speak closer to the mic.", true);
+              return;
+            }
+
+            if (jsonResult && result.reason === sdk.ResultReason.RecognizedSpeech) {
               const parsed = JSON.parse(jsonResult);
               const nbest0 = parsed?.NBest?.[0];
               renderScores(nbest0?.PronunciationAssessment);
@@ -425,10 +453,13 @@
 
         recognizer.sessionStopped = () => {
           recognizer.close();
+          if (!isStopping) {
+            setStatus("Recording session ended.");
+          }
           finalizeUi();
         };
 
-        setStatus("Listening... Speak now. (Auto-stop on silence or press Stop)");
+        setStatus("Connecting microphone...");
         sessionGuardTimer = setTimeout(() => {
           if (activeRecognizer === recognizer) {
             setStatus("Session timed out waiting for server response. Switching to fallback mode.", true);
