@@ -4,19 +4,34 @@
  */
 
 // ===========================================================================
-// Color palette
+// Color palette (theme-aware)
 // ===========================================================================
-const C = {
-  bg:         '#0a0a0f',
-  text:       '#e8e4dc',
-  muted:      '#5c5850',
-  chain:      '#8a8478',
-  gold:       '#c4a44a',
-  goldBright: '#e0c060',
-  jade:       '#4a9e6e',
-  red:        '#c23a22',
-  amber:      '#c47a2a',
+const COLOR_THEMES = {
+  default: {
+    bg:         '#0a0a0f',
+    text:       '#e8e4dc',
+    muted:      '#5c5850',
+    chain:      '#8a8478',
+    gold:       '#c4a44a',
+    goldBright: '#e0c060',
+    jade:       '#4a9e6e',
+    red:        '#c23a22',
+    amber:      '#c47a2a',
+  },
+  japan: {
+    bg:         '#0d0508',
+    text:       '#ffedf2',
+    muted:      '#7a3848',
+    chain:      '#b06070',
+    gold:       '#e8274f',   /* torii red for "good" score */
+    goldBright: '#ff7096',   /* sakura pink for top combos */
+    jade:       '#22c55e',   /* bamboo green for excellent */
+    red:        '#c0392b',   /* dark red for poor */
+    amber:      '#e67e22',   /* mango orange for fair */
+  },
 };
+
+let C = { ...COLOR_THEMES.default };
 
 // ===========================================================================
 // Sound helpers
@@ -185,6 +200,10 @@ export function playNinjaAnimation(container, result, options = {}) {
     onListen,
     onListenSlow,
   } = options;
+
+  // Apply color palette for the current theme
+  const _theme = document.documentElement.dataset.theme;
+  Object.assign(C, COLOR_THEMES[_theme] || COLOR_THEMES.default);
 
   // Resolve or create AudioContext (guard against browsers without Web Audio)
   let audioCtx = _audioCtx;
