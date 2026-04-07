@@ -102,11 +102,23 @@ async function startParallelRecorder() {
 export class WebSpeechTTS {
   constructor(settings) {
     this.settings = settings;
+    this._voicesReady = false;
+
+    // Preload voices — Chrome loads them asynchronously and speechSynthesis.speak()
+    // can silently fail if called before voices are available.
+    if (window.speechSynthesis) {
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) {
+        this._voicesReady = true;
+      }
+      window.speechSynthesis.addEventListener('voiceschanged', () => {
+        this._voicesReady = true;
+      });
+    }
   }
 
   /**
    * Return available voices for the current accent target, sorted by priority.
-   * Async because voices may not be ready immediately.
    */
   getAvailableVoices() {
     const lang = this.settings.accentTarget === 'uk' ? 'en-GB' : 'en-US';
@@ -117,50 +129,79 @@ export class WebSpeechTTS {
   }
 
   speak(text) {
-    // Only cancel if actually speaking — calling cancel() unconditionally
-    // causes iOS Safari to silently ignore subsequent speak() calls (WebKit bug),
-    // and on Chrome it can drop the utterance if speak() follows immediately.
-    if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+    if (!window.speechSynthesis) {
+      return Promise.reject(new Error('Speech synthesis not supported in this browser'));
+    }
+
+    // Chrome workaround: resume() unfreezes an engine that went idle.
+    // This is safe to call even if the engine is not paused.
+    if (window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+    }
+
+    // Cancel any in-progress speech.
+    // On iOS Safari, calling cancel() when nothing is speaking causes subsequent
+    // speak() calls to be silently ignored (WebKit bug), so we guard it.
+    // On Chrome, we must cancel even when not visibly speaking because the internal
+    // queue can get stuck ("poisoned") after errors or page inactivity.
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    if (isIOS) {
+      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+        window.speechSynthesis.cancel();
+      }
+    } else {
+      // Non-iOS: always cancel to clear any stuck queue
       window.speechSynthesis.cancel();
     }
 
     return new Promise((resolve, reject) => {
-      const utterance = new SpeechSynthesisUtterance(text);
-      const lang = this.settings.accentTarget === 'uk' ? 'en-GB' : 'en-US';
-      const voices = this.getAvailableVoices();
+      const doSpeak = () => {
+        const utterance = new SpeechSynthesisUtterance(text);
+        const lang = this.settings.accentTarget === 'uk' ? 'en-GB' : 'en-US';
+        const voices = this.getAvailableVoices();
 
-      if (this.settings.ttsVoice) {
-        const match = window.speechSynthesis.getVoices().find(v => v.name === this.settings.ttsVoice);
-        if (match) utterance.voice = match;
-      } else if (voices.length > 0) {
-        utterance.voice = voices[0];
+        if (this.settings.ttsVoice) {
+          const match = window.speechSynthesis.getVoices().find(v => v.name === this.settings.ttsVoice);
+          if (match) utterance.voice = match;
+        } else if (voices.length > 0) {
+          utterance.voice = voices[0];
+        }
+
+        utterance.lang = lang;
+        utterance.rate = 1.0;
+        utterance.pitch = 1.0;
+        utterance.volume = 1.0;
+
+        // Safety timeout: some browsers never fire onend/onerror
+        const SAFETY_TIMEOUT_MS = 30000;
+        const safetyTimer = setTimeout(() => {
+          this._utterance = null;
+          resolve();
+        }, SAFETY_TIMEOUT_MS);
+
+        utterance.onend = () => {
+          clearTimeout(safetyTimer);
+          resolve();
+        };
+        utterance.onerror = e => {
+          clearTimeout(safetyTimer);
+          // iOS Safari fires 'interrupted' when cancel() is called — not a real error.
+          // Chrome fires 'canceled' after cancel() — also not a real error.
+          if (e.error === 'interrupted' || e.error === 'canceled') { resolve(); return; }
+          reject(new Error(`TTS error: ${e.error}`));
+        };
+
+        this._utterance = utterance;
+        window.speechSynthesis.speak(utterance);
+      };
+
+      if (isIOS) {
+        // iOS: speak synchronously to preserve user gesture context
+        doSpeak();
+      } else {
+        // Chrome: small delay after cancel() to avoid dropped utterance
+        setTimeout(doSpeak, 50);
       }
-
-      utterance.lang = lang;
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
-      utterance.volume = 1.0;
-
-      // Safety timeout: some browsers never fire onend/onerror
-      const SAFETY_TIMEOUT_MS = 30000;
-      const safetyTimer = setTimeout(() => {
-        this._utterance = null;
-        resolve();
-      }, SAFETY_TIMEOUT_MS);
-
-      utterance.onend = () => {
-        clearTimeout(safetyTimer);
-        resolve();
-      };
-      utterance.onerror = e => {
-        clearTimeout(safetyTimer);
-        // iOS Safari fires 'interrupted' when cancel() is called — not a real error
-        if (e.error === 'interrupted') { resolve(); return; }
-        reject(new Error(`TTS error: ${e.error}`));
-      };
-
-      this._utterance = utterance;
-      window.speechSynthesis.speak(utterance);
     });
   }
 
@@ -198,7 +239,9 @@ export class AzureTTS {
     speechConfig.speechSynthesisVoiceName = this._resolveVoiceName();
 
     return new Promise((resolve, reject) => {
-      const synthesizer = new SpeechSDK.SpeechSynthesizer(speechConfig, null);
+      // Use default speaker output — passing null would suppress audio playback
+      const audioConfig = SpeechSDK.AudioConfig.fromDefaultSpeakerOutput();
+      const synthesizer = new SpeechSDK.SpeechSynthesizer(speechConfig, audioConfig);
       this._synthesizer = synthesizer;
 
       synthesizer.speakTextAsync(
