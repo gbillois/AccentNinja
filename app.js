@@ -600,23 +600,39 @@ function showNinjaResults(result) {
 
   // Build TTS callbacks
   function onListen() {
-    state.engines.tts?.speak(phrase).catch(() => {});
+    state.engines.tts?.speak(phrase).catch(err => {
+      console.error('[AccentNinja] TTS listen error:', err);
+      showToast(`Erreur TTS : ${err.message}`, 'error');
+    });
   }
   function onListenSlow() {
     // Use Web Speech API directly at 0.7x if available, else fall back to normal
     if (window.speechSynthesis && state.settings.ttsEngine === 'web') {
-      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+      // Chrome workaround: resume frozen engine, always cancel to clear stuck queue
+      if (window.speechSynthesis.paused) window.speechSynthesis.resume();
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+      if (isIOS) {
+        if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+          window.speechSynthesis.cancel();
+        }
+      } else {
         window.speechSynthesis.cancel();
       }
-      const utt  = new SpeechSynthesisUtterance(phrase);
-      const lang = state.settings.accentTarget === 'uk' ? 'en-GB' : 'en-US';
-      const voices = window.speechSynthesis.getVoices().filter(v => v.lang.startsWith(lang));
-      if (voices.length) utt.voice = voices[0];
-      utt.lang  = lang;
-      utt.rate  = 0.7;
-      window.speechSynthesis.speak(utt);
+      const doSlow = () => {
+        const utt  = new SpeechSynthesisUtterance(phrase);
+        const lang = state.settings.accentTarget === 'uk' ? 'en-GB' : 'en-US';
+        const voices = window.speechSynthesis.getVoices().filter(v => v.lang.startsWith(lang));
+        if (voices.length) utt.voice = voices[0];
+        utt.lang  = lang;
+        utt.rate  = 0.7;
+        window.speechSynthesis.speak(utt);
+      };
+      if (isIOS) { doSlow(); } else { setTimeout(doSlow, 50); }
     } else {
-      state.engines.tts?.speak(phrase).catch(() => {});
+      state.engines.tts?.speak(phrase).catch(err => {
+        console.error('[AccentNinja] TTS slow error:', err);
+        showToast(`Erreur TTS : ${err.message}`, 'error');
+      });
     }
   }
 
