@@ -74,6 +74,7 @@ const STRINGS = {
 
     'results.title': 'Résultats',
     'results.score': 'Score',
+    'results.globalScore': 'Score global',
     'results.accuracy': 'Précision',
     'results.fluency': 'Fluidité',
     'results.completeness': 'Complétude',
@@ -199,6 +200,7 @@ const STRINGS = {
 
     'results.title': 'Results',
     'results.score': 'Score',
+    'results.globalScore': 'Global Score',
     'results.accuracy': 'Accuracy',
     'results.fluency': 'Fluency',
     'results.completeness': 'Completeness',

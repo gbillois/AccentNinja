@@ -56,7 +56,7 @@ const multiState = {
   phase:        'setup',  // 'setup' | 'playing' | 'results'
   playerCount:  2,
   roundCount:   5,        // phrases per player
-  players:      [],       // { name, scores: number[] }
+  players:      [],       // { name, scores: number[], details: object[] }
   currentPlayer: 0,
   currentRound:  0,
   phrases:      [],       // selected phrases for the game
@@ -857,7 +857,7 @@ function renderMultiSetup() {
     }
 
     // Initialize game state
-    multiState.players = names.map(n => ({ name: n, scores: [] }));
+    multiState.players = names.map(n => ({ name: n, scores: [], details: [] }));
     multiState.currentPlayer = 0;
     multiState.currentRound  = 0;
     multiState.status        = 'idle';
@@ -1040,9 +1040,16 @@ async function handleMultiRecord(text) {
     multiState.status = 'done';
     multiState.lastResult = result;
 
-    // Store score
+    // Store score + detailed breakdown
     const score = Math.round(result.pronScore ?? 0);
     multiState.players[multiState.currentPlayer].scores.push(score);
+    multiState.players[multiState.currentPlayer].details.push({
+      pronScore:        Math.round(result.pronScore ?? 0),
+      accuracyScore:    result.accuracyScore != null ? Math.round(result.accuracyScore) : null,
+      fluencyScore:     result.fluencyScore != null ? Math.round(result.fluencyScore) : null,
+      completenessScore: result.completenessScore != null ? Math.round(result.completenessScore) : null,
+      prosodyScore:     result.prosodyScore != null ? Math.round(result.prosodyScore) : null,
+    });
 
     // Update UI
     btnEl.classList.remove('p-record-btn--recording');
@@ -1117,14 +1124,37 @@ function advanceMultiTurn() {
 function renderMultiResults() {
   const screen = document.getElementById('screen-multiplayer');
 
-  // Compute averages and rank
+  // Compute averages per criterion and rank
+  const criteriaKeys = ['pronScore', 'accuracyScore', 'fluencyScore', 'completenessScore', 'prosodyScore'];
+  const criteriaLabels = {
+    pronScore:         { icon: '🏆', label: t('results.globalScore') || 'Score global' },
+    accuracyScore:     { icon: '🎯', label: t('results.accuracy') },
+    fluencyScore:      { icon: '🌊', label: t('results.fluency') },
+    completenessScore: { icon: '✅', label: t('results.completeness') },
+    prosodyScore:      { icon: '🎵', label: t('results.prosody') },
+  };
+
+  function avgForCriterion(details, key) {
+    const vals = details.map(d => d[key]).filter(v => v != null);
+    return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+  }
+
   const ranked = multiState.players
     .map((p, i) => {
       const total = p.scores.reduce((a, b) => a + b, 0);
       const avg   = p.scores.length ? total / p.scores.length : 0;
-      return { ...p, avg: Math.round(avg), total, index: i };
+      const criteriaAvgs = {};
+      for (const key of criteriaKeys) {
+        criteriaAvgs[key] = avgForCriterion(p.details || [], key);
+      }
+      return { ...p, avg: Math.round(avg), total, index: i, criteriaAvgs };
     })
     .sort((a, b) => b.avg - a.avg);
+
+  // Determine which criteria are available (at least one player has data)
+  const availableCriteria = criteriaKeys.filter(key =>
+    ranked.some(p => p.criteriaAvgs[key] != null)
+  );
 
   const winner = ranked[0];
   const isTie  = ranked.length > 1 && ranked[0].avg === ranked[1].avg;
@@ -1144,7 +1174,7 @@ function renderMultiResults() {
           <div class="multi-winner-score">${winner.avg} / 100</div>
         </div>
 
-        <!-- Full ranking -->
+        <!-- Full ranking with detailed scores -->
         <div class="multi-ranking">
           <p class="p-label">${t('multi.rank')}</p>
           <div class="multi-ranking-list">
@@ -1152,11 +1182,32 @@ function renderMultiResults() {
               const medal = i === 0 ? '&#x1F947;' : i === 1 ? '&#x1F948;' : i === 2 ? '&#x1F949;' : `${i + 1}.`;
               const cls   = scoreClass(p.avg);
               return `
-                <div class="multi-rank-row">
-                  <span class="multi-rank-medal">${medal}</span>
-                  <span class="multi-rank-name">${esc(p.name)}</span>
-                  <span class="multi-rank-scores">${p.scores.map(s => `<span class="p-score-value--${scoreClass(s)}">${s}</span>`).join('<span class="multi-rank-sep">·</span>')}</span>
-                  <span class="multi-rank-avg p-score-value--${cls}">${t('multi.avg')}: ${p.avg}</span>
+                <div class="multi-rank-card">
+                  <div class="multi-rank-header">
+                    <span class="multi-rank-medal">${medal}</span>
+                    <span class="multi-rank-name">${esc(p.name)}</span>
+                    <span class="multi-rank-avg p-score-value--${cls}">${p.avg}</span>
+                  </div>
+                  <div class="multi-rank-details">
+                    ${availableCriteria.map(key => {
+                      const v = p.criteriaAvgs[key];
+                      if (v == null) return '';
+                      const c = scoreClass(v);
+                      const meta = criteriaLabels[key];
+                      return `
+                        <div class="multi-detail-row">
+                          <span class="multi-detail-label">${meta.icon} ${meta.label}</span>
+                          <div class="multi-detail-bar-track">
+                            <div class="multi-detail-bar-fill p-score-fill--${c}" style="width:${v}%"></div>
+                          </div>
+                          <span class="multi-detail-value p-score-value--${c}">${v}</span>
+                        </div>
+                      `;
+                    }).join('')}
+                  </div>
+                  <div class="multi-rank-rounds">
+                    ${p.scores.map((s, ri) => `<span class="multi-round-chip p-score-value--${scoreClass(s)}" title="Round ${ri + 1}">${s}</span>`).join('')}
+                  </div>
                 </div>
               `;
             }).join('')}
