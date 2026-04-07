@@ -1592,14 +1592,21 @@ input, select, textarea { font: inherit; color: inherit; }
   margin-top: var(--space-3);
 }
 
-.multi-rank-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+/* Player score card */
+.multi-rank-card {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.multi-rank-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
 }
 
 .multi-rank-medal {
@@ -1619,26 +1626,74 @@ input, select, textarea { font: inherit; color: inherit; }
   white-space: nowrap;
 }
 
-.multi-rank-scores {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  font-size: var(--text-sm);
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.multi-rank-sep {
-  color: var(--color-text-muted);
-  margin: 0 2px;
-}
-
 .multi-rank-avg {
   font-weight: 800;
-  font-size: var(--text-sm);
+  font-size: var(--text-lg);
   flex-shrink: 0;
-  min-width: 5rem;
+}
+
+/* Detailed criteria breakdown */
+.multi-rank-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 0 var(--space-1);
+}
+
+.multi-detail-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.multi-detail-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  width: 7rem;
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.multi-detail-bar-track {
+  flex: 1;
+  height: 6px;
+  background: var(--color-border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.multi-detail-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.6s ease;
+}
+
+.multi-detail-value {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  width: 2rem;
   text-align: right;
+  flex-shrink: 0;
+}
+
+/* Round chips */
+.multi-rank-rounds {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--color-border);
+}
+
+.multi-round-chip {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
 }
 
 .multi-result-actions {
