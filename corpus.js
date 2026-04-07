@@ -306,6 +306,73 @@ export const MINIMAL_PAIRS = [
 // Phoneme tips — reference guide for individual IPA sounds
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Multiplayer phrases — sentences of increasing difficulty for French speakers
+// Each "tier" is progressively harder (phonemes, length, connected speech)
+// ---------------------------------------------------------------------------
+
+export const MULTIPLAYER_PHRASES = [
+  // Tier 1 — Short & basic (difficulty 1-2)
+  { text: 'This is the thing.',                   difficulty: 1 },
+  { text: 'I think it is good.',                  difficulty: 1 },
+  { text: 'The cat sat on the hat.',              difficulty: 1 },
+  { text: 'Where is the cup?',                    difficulty: 1 },
+  { text: 'How are you today?',                   difficulty: 1 },
+  { text: 'She has a red bag.',                    difficulty: 1 },
+  { text: 'Thank you very much.',                 difficulty: 2 },
+  { text: 'Would you like some water?',           difficulty: 2 },
+  { text: 'He lives in a big house.',             difficulty: 2 },
+  { text: 'What time is it right now?',           difficulty: 2 },
+
+  // Tier 2 — TH + vowel contrasts (difficulty 3-4)
+  { text: 'I thought those three things through.',             difficulty: 3 },
+  { text: 'The weather was rather warm this Thursday.',        difficulty: 3 },
+  { text: 'His brother and his father went there together.',   difficulty: 3 },
+  { text: 'She ships cheap sheep sheets every week.',          difficulty: 3 },
+  { text: 'Pull the wool over the pool fool.',                 difficulty: 4 },
+  { text: 'The thin man thinks thick thoughts.',               difficulty: 4 },
+  { text: 'Thirty-three thirsty thieves thought thoroughly.', difficulty: 4 },
+  { text: 'He breathed through his teeth with ease.',          difficulty: 4 },
+  { text: 'Which witch watched which watch?',                  difficulty: 4 },
+  { text: 'Bad lads had glad dads in the sand.',               difficulty: 4 },
+
+  // Tier 3 — V/W + R + connected speech (difficulty 5-6)
+  { text: 'Very well, the vine and the wine are both fine.',                difficulty: 5 },
+  { text: 'The world is a wonderful and weird place to explore.',           difficulty: 5 },
+  { text: 'Rural breweries rarely brew regular red ales.',                  difficulty: 5 },
+  { text: 'We were wary of the very heavy rain on Wednesday.',             difficulty: 6 },
+  { text: 'Her third birthday party was on the first of February.',        difficulty: 6 },
+  { text: 'The warrior worried whether the weather would worsen.',         difficulty: 6 },
+  { text: 'Roger realized the railway ran through the rural area.',        difficulty: 6 },
+  { text: 'Whoever reviews the work will rewrite the worst parts.',        difficulty: 6 },
+  { text: 'Variety is the very spice of life, is it not?',                 difficulty: 5 },
+  { text: 'Will you walk with us or wait in the van?',                     difficulty: 5 },
+
+  // Tier 4 — Reductions, weak forms, stress (difficulty 7-8)
+  { text: 'I could have gone to the store, but I would have been late.',             difficulty: 7 },
+  { text: 'She should have told him that she was not going to be there.',             difficulty: 7 },
+  { text: 'What do you think you are going to do about it?',                         difficulty: 7 },
+  { text: 'He is not the kind of person who would have said something like that.',   difficulty: 7 },
+  { text: 'The photograph and the photographer photographed the photography.',       difficulty: 8 },
+  { text: 'An anonymous analysis of the analytical data was thoroughly examined.',    difficulty: 8 },
+  { text: 'The comfortable temperature was comparable to a Mediterranean climate.',  difficulty: 8 },
+  { text: 'Particularly, the parliamentary secretary was characteristically quiet.',  difficulty: 8 },
+  { text: 'The entrepreneurs were enthusiastically entrepreneurial.',                difficulty: 8 },
+  { text: 'A considerable percentage of the population participated voluntarily.',   difficulty: 8 },
+
+  // Tier 5 — Tongue twisters & mastery (difficulty 9-10)
+  { text: 'The sixth sick sheik\'s sixth sheep\'s sick.',                                          difficulty: 9 },
+  { text: 'She sells seashells by the seashore and the shells she sells are seashells for sure.', difficulty: 9 },
+  { text: 'How much wood would a woodchuck chuck if a woodchuck could chuck wood?',               difficulty: 9 },
+  { text: 'Peter Piper picked a peck of pickled peppers.',                                         difficulty: 9 },
+  { text: 'Red lorry, yellow lorry, red lorry, yellow lorry.',                                     difficulty: 9 },
+  { text: 'Through three cheese trees, three free fleas flew.',                                    difficulty: 10 },
+  { text: 'The thirty-three thieves thought that they thrilled the throne throughout Thursday.',   difficulty: 10 },
+  { text: 'Whether the weather is warm, whether the weather is hot, we have to put up with the weather whether we like it or not.', difficulty: 10 },
+  { text: 'Uniquely, the quinquennial queue for the boutique was quite picturesque.',              difficulty: 10 },
+  { text: 'The epitome of hyperbole is not synonymous with catastrophe.',                          difficulty: 10 },
+];
+
 export const PHONEME_TIPS = {
   'θ': {
     label: 'TH sourd (think)',

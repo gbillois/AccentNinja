@@ -5,7 +5,7 @@
 
 import { createTTSEngine, createAssessmentEngine, AZURE_VOICES, AZURE_REGIONS, webVoicePriority } from './engines.js';
 import { t, setLanguage } from './i18n.js';
-import { CORPUS } from './corpus.js';
+import { CORPUS, MULTIPLAYER_PHRASES } from './corpus.js';
 import { playNinjaAnimation } from './ninja.js';
 
 // ===========================================================================
@@ -49,6 +49,19 @@ const practiceState = {
   status:       'idle',   // 'idle' | 'speaking' | 'recording' | 'processing' | 'done'
   result:       null,
   recordingBlob: null,
+};
+
+// Multiplayer state
+const multiState = {
+  phase:        'setup',  // 'setup' | 'playing' | 'results'
+  playerCount:  2,
+  roundCount:   5,        // phrases per player
+  players:      [],       // { name, scores: number[] }
+  currentPlayer: 0,
+  currentRound:  0,
+  phrases:      [],       // selected phrases for the game
+  status:       'idle',   // 'idle' | 'recording' | 'processing' | 'done'
+  lastResult:   null,
 };
 
 // ===========================================================================
@@ -124,11 +137,12 @@ function navigate(screen) {
 
   // Render content for this screen
   switch (screen) {
-    case 'home':     renderHomeScreen();     break;
-    case 'settings': renderSettingsScreen(); break;
-    case 'setup':    renderSetupScreen();    break;
-    case 'practice': renderPracticeScreen(); break;
-    case 'results':  renderResultsScreen();  break;
+    case 'home':        renderHomeScreen();        break;
+    case 'settings':    renderSettingsScreen();    break;
+    case 'setup':       renderSetupScreen();       break;
+    case 'practice':    renderPracticeScreen();    break;
+    case 'results':     renderResultsScreen();     break;
+    case 'multiplayer': renderMultiplayerScreen(); break;
   }
 
   // Update hash (don't push 'home' or 'splash' to avoid spurious back entries)
@@ -328,6 +342,16 @@ function renderHomeScreen() {
           }).join('')}
         </div>
 
+        <!-- Multiplayer button -->
+        <button class="multi-home-btn" id="multi-btn">
+          <span class="multi-home-icon">&#x1F3AE;</span>
+          <div class="multi-home-text">
+            <span class="multi-home-title">${t('multi.btn')}</span>
+            <span class="multi-home-sub">${t('multi.btn.sub')}</span>
+          </div>
+          <span class="level0-arrow">&rarr;</span>
+        </button>
+
         <div class="card" style="opacity:0.5">
           <p class="text-muted text-sm text-center">${t('home.levels.coming')}</p>
         </div>
@@ -337,6 +361,10 @@ function renderHomeScreen() {
 
   document.getElementById('home-settings-btn').addEventListener('click', () => navigate('settings'));
   document.getElementById('level0-btn').addEventListener('click', () => navigate('practice'));
+  document.getElementById('multi-btn').addEventListener('click', () => {
+    multiState.phase = 'setup';
+    navigate('multiplayer');
+  });
 
   document.querySelectorAll('.level-card:not(.level-card--locked)').forEach(btn => {
     btn.addEventListener('click', () => navigate('practice'));
@@ -701,6 +729,443 @@ function phonemeDetail(word) {
   if (!word.phonemes?.length) return word.errorType ?? '';
   const worst = [...word.phonemes].sort((a, b) => a.accuracyScore - b.accuracyScore)[0];
   return worst ? `/${worst.phoneme}/ — ${Math.round(worst.accuracyScore)}%` : '';
+}
+
+// ===========================================================================
+// Multiplayer screen
+// ===========================================================================
+
+function renderMultiplayerScreen() {
+  switch (multiState.phase) {
+    case 'setup':   renderMultiSetup();   break;
+    case 'playing':  renderMultiPlaying(); break;
+    case 'results':  renderMultiResults(); break;
+  }
+}
+
+// --- Multiplayer: Setup phase ---
+
+function renderMultiSetup() {
+  const screen = document.getElementById('screen-multiplayer');
+  screen.innerHTML = `
+    <header class="app-header">
+      <button class="btn-icon" id="multi-back-btn" aria-label="${t('nav.back')}">
+        ${ICON_BACK}
+      </button>
+      <h1 class="header-title">${t('multi.title')}</h1>
+    </header>
+
+    <div class="screen-body">
+      <div class="multi-setup">
+
+        <div class="multi-setup-icon">&#x1F3AE;</div>
+
+        <!-- Player count -->
+        <section class="multi-field">
+          <label class="p-label">${t('multi.players')}</label>
+          <div class="multi-stepper">
+            <button class="btn btn-ghost btn-sm" id="players-minus" type="button">&minus;</button>
+            <span class="multi-stepper-value" id="players-value">${multiState.playerCount}</span>
+            <button class="btn btn-ghost btn-sm" id="players-plus" type="button">+</button>
+          </div>
+        </section>
+
+        <!-- Rounds count -->
+        <section class="multi-field">
+          <label class="p-label">${t('multi.rounds')}</label>
+          <div class="multi-stepper">
+            <button class="btn btn-ghost btn-sm" id="rounds-minus" type="button">&minus;</button>
+            <span class="multi-stepper-value" id="rounds-value">${multiState.roundCount}</span>
+            <button class="btn btn-ghost btn-sm" id="rounds-plus" type="button">+</button>
+          </div>
+        </section>
+
+        <!-- Player names -->
+        <section class="multi-field">
+          <label class="p-label">${t('multi.playerName')}s</label>
+          <div class="multi-names" id="multi-names">
+            ${buildPlayerNameInputs(multiState.playerCount)}
+          </div>
+        </section>
+
+        <p class="text-muted text-sm text-center">${t('multi.difficulty')}</p>
+
+        <button class="btn btn-primary btn-full btn-lg" id="multi-start-btn" type="button">
+          ${t('multi.start')}
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('multi-back-btn').addEventListener('click', () => navigate('home'));
+
+  // Steppers
+  const playersVal = document.getElementById('players-value');
+  document.getElementById('players-minus').addEventListener('click', () => {
+    if (multiState.playerCount > 2) {
+      multiState.playerCount--;
+      playersVal.textContent = multiState.playerCount;
+      document.getElementById('multi-names').innerHTML = buildPlayerNameInputs(multiState.playerCount);
+    }
+  });
+  document.getElementById('players-plus').addEventListener('click', () => {
+    if (multiState.playerCount < 8) {
+      multiState.playerCount++;
+      playersVal.textContent = multiState.playerCount;
+      document.getElementById('multi-names').innerHTML = buildPlayerNameInputs(multiState.playerCount);
+    }
+  });
+
+  const roundsVal = document.getElementById('rounds-value');
+  document.getElementById('rounds-minus').addEventListener('click', () => {
+    if (multiState.roundCount > 1) {
+      multiState.roundCount--;
+      roundsVal.textContent = multiState.roundCount;
+    }
+  });
+  document.getElementById('rounds-plus').addEventListener('click', () => {
+    if (multiState.roundCount < 15) {
+      multiState.roundCount++;
+      roundsVal.textContent = multiState.roundCount;
+    }
+  });
+
+  // Start game
+  document.getElementById('multi-start-btn').addEventListener('click', () => {
+    // Collect player names
+    const names = [];
+    for (let i = 0; i < multiState.playerCount; i++) {
+      const input = document.getElementById(`player-name-${i}`);
+      const name = input?.value?.trim() || `${t('multi.playerName')} ${i + 1}`;
+      names.push(name);
+    }
+
+    // Initialize game state
+    multiState.players = names.map(n => ({ name: n, scores: [] }));
+    multiState.currentPlayer = 0;
+    multiState.currentRound  = 0;
+    multiState.status        = 'idle';
+    multiState.lastResult    = null;
+    multiState.phrases       = pickMultiPhrases(multiState.roundCount);
+    multiState.phase         = 'playing';
+    renderMultiplayerScreen();
+  });
+}
+
+function buildPlayerNameInputs(count) {
+  let html = '';
+  for (let i = 0; i < count; i++) {
+    html += `<input class="form-input multi-name-input" id="player-name-${i}"
+              placeholder="${t('multi.playerName')} ${i + 1}" maxlength="20"
+              autocomplete="off" spellcheck="false">`;
+  }
+  return html;
+}
+
+/** Pick `count` phrases with increasing difficulty. */
+function pickMultiPhrases(count) {
+  // Sort by difficulty, then pick evenly across the range
+  const sorted = [...MULTIPLAYER_PHRASES].sort((a, b) => a.difficulty - b.difficulty);
+  const step = Math.max(1, Math.floor(sorted.length / count));
+  const picks = [];
+  const used = new Set();
+
+  for (let i = 0; i < count; i++) {
+    // Target index: spread evenly across difficulty range
+    let targetIdx = Math.min(Math.floor(i * step), sorted.length - 1);
+
+    // Avoid duplicates — search nearby
+    while (used.has(targetIdx) && targetIdx < sorted.length - 1) targetIdx++;
+    if (used.has(targetIdx)) {
+      // Fallback: find any unused
+      for (let j = 0; j < sorted.length; j++) {
+        if (!used.has(j)) { targetIdx = j; break; }
+      }
+    }
+
+    used.add(targetIdx);
+    picks.push(sorted[targetIdx]);
+  }
+
+  return picks;
+}
+
+// --- Multiplayer: Playing phase ---
+
+function renderMultiPlaying() {
+  const screen = document.getElementById('screen-multiplayer');
+  const player = multiState.players[multiState.currentPlayer];
+  const phrase = multiState.phrases[multiState.currentRound];
+  const totalPhrases = multiState.roundCount;
+  const engineLabel = state.settings.assessmentEngine === 'azure'
+    ? `<span class="badge badge-primary">Azure</span>`
+    : `<span class="badge badge-muted">Web Speech</span>`;
+
+  screen.innerHTML = `
+    <header class="app-header">
+      <button class="btn-icon" id="multi-quit-btn" aria-label="${t('nav.back')}">
+        ${ICON_BACK}
+      </button>
+      <h1 class="header-title">${t('multi.title')}</h1>
+      <div class="header-actions">${engineLabel}</div>
+    </header>
+
+    <div class="screen-body">
+      <div class="multi-playing">
+
+        <!-- Turn info -->
+        <div class="multi-turn-bar">
+          <div class="multi-turn-player">
+            <span class="multi-turn-label">${t('multi.turn')}</span>
+            <span class="multi-turn-name">${esc(player.name)}</span>
+          </div>
+          <div class="multi-turn-progress">
+            ${t('multi.phraseCount')} ${multiState.currentRound + 1} ${t('multi.of')} ${totalPhrases}
+          </div>
+        </div>
+
+        <!-- Progress dots -->
+        <div class="multi-dots">
+          ${multiState.players.map((p, i) => `
+            <span class="multi-dot ${i === multiState.currentPlayer ? 'multi-dot--active' : ''}"
+                  title="${esc(p.name)}">
+              ${esc(p.name.charAt(0).toUpperCase())}
+            </span>
+          `).join('')}
+        </div>
+
+        <!-- Phrase card -->
+        <div class="multi-phrase-card" id="multi-phrase-card">
+          <p class="multi-phrase-text">${esc(phrase.text)}</p>
+          <span class="multi-phrase-diff">&#x2B50; ${phrase.difficulty}/10</span>
+        </div>
+
+        <!-- Listen button -->
+        <button class="btn btn-secondary" id="multi-listen-btn">
+          <span id="multi-listen-icon">&#x1F50A;</span> ${t('practice.listen')}
+        </button>
+
+        <!-- Record button -->
+        <div class="p-record-wrap">
+          <button class="p-record-btn" id="multi-record-btn" aria-label="${t('multi.record')}">
+            <span class="p-record-ring" id="multi-record-ring"></span>
+            <span class="p-record-dot" id="multi-record-dot"></span>
+          </button>
+          <span class="p-record-label" id="multi-record-label">${t('multi.record')}</span>
+        </div>
+
+        <!-- Status -->
+        <div class="p-status" id="multi-status" aria-live="polite"></div>
+
+        <!-- Score reveal (hidden until done) -->
+        <div class="multi-score-reveal hidden" id="multi-score-reveal">
+          <div class="multi-score-big" id="multi-score-value"></div>
+          <div class="multi-score-detail" id="multi-score-detail"></div>
+          <button class="btn btn-primary btn-lg" id="multi-next-btn">${t('multi.next')}</button>
+        </div>
+
+      </div>
+    </div>
+  `;
+
+  document.getElementById('multi-quit-btn').addEventListener('click', () => {
+    multiState.phase = 'setup';
+    navigate('home');
+  });
+
+  document.getElementById('multi-listen-btn').addEventListener('click', () => {
+    handleMultiListen(phrase.text);
+  });
+
+  document.getElementById('multi-record-btn').addEventListener('click', () => {
+    handleMultiRecord(phrase.text);
+  });
+
+  document.getElementById('multi-next-btn').addEventListener('click', advanceMultiTurn);
+}
+
+async function handleMultiListen(text) {
+  const btn = document.getElementById('multi-listen-btn');
+  const icon = document.getElementById('multi-listen-icon');
+  if (!btn) return;
+  btn.disabled = true;
+  icon.innerHTML = '&#x23F3;';
+  try {
+    await state.engines.tts.speak(text);
+  } catch (_) {}
+  btn.disabled = false;
+  icon.innerHTML = '&#x1F50A;';
+}
+
+async function handleMultiRecord(text) {
+  if (multiState.status === 'recording') return;
+
+  state.engines.tts?.stop?.();
+
+  const ringEl   = document.getElementById('multi-record-ring');
+  const btnEl    = document.getElementById('multi-record-btn');
+  const labelEl  = document.getElementById('multi-record-label');
+  const statusEl = document.getElementById('multi-status');
+  const listenBtn = document.getElementById('multi-listen-btn');
+
+  multiState.status = 'recording';
+  btnEl.classList.add('p-record-btn--recording');
+  ringEl?.classList.add('p-record-ring--active');
+  labelEl.textContent = t('multi.recording');
+  btnEl.disabled = true;
+  listenBtn.disabled = true;
+
+  try {
+    const result = await state.engines.assessment.assess(text, status => {
+      if (status === 'connecting') statusEl.textContent = t('engine.connecting');
+      if (status === 'recording')  statusEl.textContent = t('multi.recording');
+    });
+
+    multiState.status = 'done';
+    multiState.lastResult = result;
+
+    // Store score
+    const score = Math.round(result.pronScore ?? 0);
+    multiState.players[multiState.currentPlayer].scores.push(score);
+
+    // Update UI
+    btnEl.classList.remove('p-record-btn--recording');
+    ringEl?.classList.remove('p-record-ring--active');
+    labelEl.textContent = '';
+    statusEl.textContent = '';
+
+    // Show score
+    const revealEl = document.getElementById('multi-score-reveal');
+    const valueEl  = document.getElementById('multi-score-value');
+    const detailEl = document.getElementById('multi-score-detail');
+
+    const cls = scoreClass(score);
+    valueEl.innerHTML = `<span class="p-score-value--${cls}">${score}</span><span class="multi-score-label"> / 100</span>`;
+
+    const details = [];
+    if (result.accuracyScore != null) details.push(`${t('results.accuracy')}: ${Math.round(result.accuracyScore)}`);
+    if (result.fluencyScore != null)  details.push(`${t('results.fluency')}: ${Math.round(result.fluencyScore)}`);
+    detailEl.textContent = details.join(' · ');
+
+    revealEl.classList.remove('hidden');
+
+    // Hide phrase card to make room
+    document.getElementById('multi-phrase-card')?.classList.add('multi-phrase-card--small');
+
+    // Change button text for last turn
+    const isLastTurn = isMultiGameOver();
+    if (isLastTurn) {
+      document.getElementById('multi-next-btn').textContent = t('multi.results');
+    }
+  } catch (err) {
+    multiState.status = 'idle';
+    btnEl.classList.remove('p-record-btn--recording');
+    ringEl?.classList.remove('p-record-ring--active');
+    labelEl.textContent = t('multi.record');
+    btnEl.disabled = false;
+    listenBtn.disabled = false;
+    statusEl.textContent = `Erreur : ${err.message}`;
+  }
+}
+
+function isMultiGameOver() {
+  // Game is over when the last player has completed the last round
+  const lastPlayer = multiState.currentPlayer === multiState.players.length - 1;
+  const lastRound  = multiState.currentRound === multiState.roundCount - 1;
+  return lastPlayer && lastRound;
+}
+
+function advanceMultiTurn() {
+  if (isMultiGameOver()) {
+    // Show final results
+    multiState.phase = 'results';
+    renderMultiplayerScreen();
+    return;
+  }
+
+  // Next player
+  multiState.currentPlayer++;
+  if (multiState.currentPlayer >= multiState.players.length) {
+    // Next round
+    multiState.currentPlayer = 0;
+    multiState.currentRound++;
+  }
+
+  multiState.status     = 'idle';
+  multiState.lastResult = null;
+  renderMultiPlaying();
+}
+
+// --- Multiplayer: Results phase ---
+
+function renderMultiResults() {
+  const screen = document.getElementById('screen-multiplayer');
+
+  // Compute averages and rank
+  const ranked = multiState.players
+    .map((p, i) => {
+      const total = p.scores.reduce((a, b) => a + b, 0);
+      const avg   = p.scores.length ? total / p.scores.length : 0;
+      return { ...p, avg: Math.round(avg), total, index: i };
+    })
+    .sort((a, b) => b.avg - a.avg);
+
+  const winner = ranked[0];
+  const isTie  = ranked.length > 1 && ranked[0].avg === ranked[1].avg;
+
+  screen.innerHTML = `
+    <header class="app-header">
+      <h1 class="header-title">${t('multi.results')}</h1>
+    </header>
+
+    <div class="screen-body">
+      <div class="multi-results">
+
+        <!-- Winner announcement -->
+        <div class="multi-winner-card">
+          <div class="multi-trophy">&#x1F3C6;</div>
+          <div class="multi-winner-name">${isTie ? t('multi.tie') : esc(winner.name)}</div>
+          <div class="multi-winner-score">${winner.avg} / 100</div>
+        </div>
+
+        <!-- Full ranking -->
+        <div class="multi-ranking">
+          <p class="p-label">${t('multi.rank')}</p>
+          <div class="multi-ranking-list">
+            ${ranked.map((p, i) => {
+              const medal = i === 0 ? '&#x1F947;' : i === 1 ? '&#x1F948;' : i === 2 ? '&#x1F949;' : `${i + 1}.`;
+              const cls   = scoreClass(p.avg);
+              return `
+                <div class="multi-rank-row">
+                  <span class="multi-rank-medal">${medal}</span>
+                  <span class="multi-rank-name">${esc(p.name)}</span>
+                  <span class="multi-rank-scores">${p.scores.map(s => `<span class="p-score-value--${scoreClass(s)}">${s}</span>`).join('<span class="multi-rank-sep">·</span>')}</span>
+                  <span class="multi-rank-avg p-score-value--${cls}">${t('multi.avg')}: ${p.avg}</span>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="multi-result-actions">
+          <button class="btn btn-primary btn-lg" id="multi-replay-btn">${t('multi.playAgain')}</button>
+          <button class="btn btn-secondary" id="multi-home-btn">${t('multi.backHome')}</button>
+        </div>
+
+      </div>
+    </div>
+  `;
+
+  document.getElementById('multi-replay-btn').addEventListener('click', () => {
+    multiState.phase = 'setup';
+    renderMultiplayerScreen();
+  });
+
+  document.getElementById('multi-home-btn').addEventListener('click', () => {
+    multiState.phase = 'setup';
+    navigate('home');
+  });
 }
 
 // ===========================================================================
@@ -1099,7 +1564,7 @@ async function init() {
   } else {
     // Honour hash if present
     const hash = window.location.hash.slice(1);
-    const validScreens = ['home', 'settings', 'practice', 'results'];
+    const validScreens = ['home', 'settings', 'practice', 'results', 'multiplayer'];
     navigate(validScreens.includes(hash) ? hash : 'home');
   }
 
