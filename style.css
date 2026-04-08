@@ -901,6 +901,50 @@ input, select, textarea { font: inherit; color: inherit; }
 .connection-status--fail { color: var(--color-error); }
 
 /* ===========================================================================
+   12a. Source Type Sections (RSS / LLM / Social Networks)
+   =========================================================================== */
+
+.source-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.source-section-header > div:first-child {
+  flex: 1 1 12rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.source-section-description {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: var(--leading-snug);
+}
+
+.source-toggle {
+  flex: 0 0 auto;
+  min-width: 14rem;
+}
+
+.source-section--disabled .source-section-header > div:first-child {
+  opacity: 0.55;
+}
+
+.source-section-notice {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  font-style: italic;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--color-warning);
+}
+
+/* ===========================================================================
    12b. Level-0 card on Home screen
    =========================================================================== */
 

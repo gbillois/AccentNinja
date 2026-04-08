@@ -26,6 +26,9 @@ const DEFAULT_SETTINGS = {
   theme:            'dark',
   firstLaunch:      true,
   resultsDisplay:   'ninja',   // 'ninja' | 'classic'
+  sourceRssEnabled:    true,   // Global toggle for RSS sources
+  sourceLlmEnabled:    true,   // Global toggle for LLM sources
+  sourceSocialEnabled: true,   // Global toggle for social network sources
 };
 
 // ===========================================================================
@@ -1407,6 +1410,81 @@ function renderSettingsScreen() {
             </div>
           </section>
 
+          <!-- RSS Source Type -->
+          <section class="settings-section source-section ${s.sourceRssEnabled ? '' : 'source-section--disabled'}"
+                   id="source-rss-section">
+            <div class="source-section-header">
+              <div>
+                <p class="settings-section-title">${t('settings.sources.rss.title')}</p>
+                <p class="source-section-description">${t('settings.sources.rss.description')}</p>
+              </div>
+              <div class="toggle-group source-toggle" id="source-rss-toggle" role="group"
+                   aria-label="${t('settings.sources.rss.title')}">
+                <button class="toggle-option ${s.sourceRssEnabled ? 'active' : ''}"
+                        data-value="true" type="button">
+                  ${t('settings.sources.enabled')}
+                </button>
+                <button class="toggle-option ${!s.sourceRssEnabled ? 'active' : ''}"
+                        data-value="false" type="button">
+                  ${t('settings.sources.disabled')}
+                </button>
+              </div>
+            </div>
+            <p class="source-section-notice ${s.sourceRssEnabled ? 'hidden' : ''}">
+              ${t('settings.sources.disabledNotice')}
+            </p>
+          </section>
+
+          <!-- LLM Source Type -->
+          <section class="settings-section source-section ${s.sourceLlmEnabled ? '' : 'source-section--disabled'}"
+                   id="source-llm-section">
+            <div class="source-section-header">
+              <div>
+                <p class="settings-section-title">${t('settings.sources.llm.title')}</p>
+                <p class="source-section-description">${t('settings.sources.llm.description')}</p>
+              </div>
+              <div class="toggle-group source-toggle" id="source-llm-toggle" role="group"
+                   aria-label="${t('settings.sources.llm.title')}">
+                <button class="toggle-option ${s.sourceLlmEnabled ? 'active' : ''}"
+                        data-value="true" type="button">
+                  ${t('settings.sources.enabled')}
+                </button>
+                <button class="toggle-option ${!s.sourceLlmEnabled ? 'active' : ''}"
+                        data-value="false" type="button">
+                  ${t('settings.sources.disabled')}
+                </button>
+              </div>
+            </div>
+            <p class="source-section-notice ${s.sourceLlmEnabled ? 'hidden' : ''}">
+              ${t('settings.sources.disabledNotice')}
+            </p>
+          </section>
+
+          <!-- Social Networks Source Type -->
+          <section class="settings-section source-section ${s.sourceSocialEnabled ? '' : 'source-section--disabled'}"
+                   id="source-social-section">
+            <div class="source-section-header">
+              <div>
+                <p class="settings-section-title">${t('settings.sources.social.title')}</p>
+                <p class="source-section-description">${t('settings.sources.social.description')}</p>
+              </div>
+              <div class="toggle-group source-toggle" id="source-social-toggle" role="group"
+                   aria-label="${t('settings.sources.social.title')}">
+                <button class="toggle-option ${s.sourceSocialEnabled ? 'active' : ''}"
+                        data-value="true" type="button">
+                  ${t('settings.sources.enabled')}
+                </button>
+                <button class="toggle-option ${!s.sourceSocialEnabled ? 'active' : ''}"
+                        data-value="false" type="button">
+                  ${t('settings.sources.disabled')}
+                </button>
+              </div>
+            </div>
+            <p class="source-section-notice ${s.sourceSocialEnabled ? 'hidden' : ''}">
+              ${t('settings.sources.disabledNotice')}
+            </p>
+          </section>
+
           <!-- Save button -->
           <div style="padding: var(--space-6) 0 var(--space-4)">
             <button class="btn btn-primary btn-full" id="save-settings-btn" type="button">
@@ -1453,6 +1531,20 @@ function attachSettingsEvents() {
   // Results display toggle
   wireToggleGroup('results-display-toggle', value => {
     pendingSettings.resultsDisplay = value;
+  });
+
+  // Source type toggles (RSS / LLM / Social)
+  wireToggleGroup('source-rss-toggle', value => {
+    pendingSettings.sourceRssEnabled = value === 'true';
+    updateSourceSectionState('source-rss-section', pendingSettings.sourceRssEnabled);
+  });
+  wireToggleGroup('source-llm-toggle', value => {
+    pendingSettings.sourceLlmEnabled = value === 'true';
+    updateSourceSectionState('source-llm-section', pendingSettings.sourceLlmEnabled);
+  });
+  wireToggleGroup('source-social-toggle', value => {
+    pendingSettings.sourceSocialEnabled = value === 'true';
+    updateSourceSectionState('source-social-section', pendingSettings.sourceSocialEnabled);
   });
 
   // Live-update pending settings from text inputs / selects
@@ -1529,6 +1621,15 @@ function wireToggleGroup(groupId, onChange) {
       onChange(btn.dataset.value);
     });
   });
+}
+
+/** Toggle the visual disabled state of a source-type section and its notice. */
+function updateSourceSectionState(sectionId, enabled) {
+  const section = document.getElementById(sectionId);
+  if (!section) return;
+  section.classList.toggle('source-section--disabled', !enabled);
+  const notice = section.querySelector('.source-section-notice');
+  if (notice) notice.classList.toggle('hidden', enabled);
 }
 
 /** Show or hide the Azure credentials section based on pending engine selections. */

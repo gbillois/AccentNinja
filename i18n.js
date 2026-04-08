@@ -56,6 +56,16 @@ const STRINGS = {
     'settings.connectionFail': 'Échec de connexion',
     'settings.testing': 'Test en cours...',
 
+    'settings.sources.rss.title': 'Sources RSS',
+    'settings.sources.rss.description': 'Importer du contenu depuis des flux RSS',
+    'settings.sources.llm.title': 'Sources LLM',
+    'settings.sources.llm.description': 'Générer du contenu avec un modèle de langage',
+    'settings.sources.social.title': 'Réseaux sociaux',
+    'settings.sources.social.description': 'Importer du contenu depuis les réseaux sociaux',
+    'settings.sources.enabled': 'Activé',
+    'settings.sources.disabled': 'Désactivé',
+    'settings.sources.disabledNotice': 'Ce type de source est désactivé. Activez-le pour configurer ses options.',
+
     'home.title': 'Choisissez votre niveau',
     'home.level': 'Niveau',
     'home.quickStart': 'Démarrage rapide',
@@ -181,6 +191,16 @@ const STRINGS = {
     'settings.connectionOk': 'Connection successful ✓',
     'settings.connectionFail': 'Connection failed',
     'settings.testing': 'Testing...',
+
+    'settings.sources.rss.title': 'RSS Sources',
+    'settings.sources.rss.description': 'Import content from RSS feeds',
+    'settings.sources.llm.title': 'LLM Sources',
+    'settings.sources.llm.description': 'Generate content with a language model',
+    'settings.sources.social.title': 'Social Networks',
+    'settings.sources.social.description': 'Import content from social networks',
+    'settings.sources.enabled': 'Enabled',
+    'settings.sources.disabled': 'Disabled',
+    'settings.sources.disabledNotice': 'This source type is disabled. Enable it to configure its options.',
 
     'home.title': 'Choose Your Level',
     'home.level': 'Level',
