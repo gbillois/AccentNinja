@@ -934,29 +934,33 @@ function buildPlayerNameInputs(count) {
   return html;
 }
 
-/** Pick `count` phrases with increasing difficulty. */
+/** Pick `count` phrases spread across difficulty tiers, randomly within each tier. */
 function pickMultiPhrases(count) {
-  // Sort by difficulty, then pick evenly across the range
-  const sorted = [...MULTIPLAYER_PHRASES].sort((a, b) => a.difficulty - b.difficulty);
-  const step = Math.max(1, Math.floor(sorted.length / count));
+  // Group phrases by difficulty tier (1-2, 3-4, 5-6, 7-8, 9-10)
+  const tiers = [[], [], [], [], []];
+  for (const p of MULTIPLAYER_PHRASES) {
+    tiers[Math.floor((p.difficulty - 1) / 2)].push(p);
+  }
+
+  // Shuffle each tier
+  for (const tier of tiers) {
+    for (let i = tier.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [tier[i], tier[j]] = [tier[j], tier[i]];
+    }
+  }
+
+  // Spread picks evenly across tiers, round-robining through them
   const picks = [];
-  const used = new Set();
+  const tierIdxs = [0, 0, 0, 0, 0];
+  const nonEmptyTiers = tiers.map((t, i) => t.length > 0 ? i : -1).filter(i => i >= 0);
 
   for (let i = 0; i < count; i++) {
-    // Target index: spread evenly across difficulty range
-    let targetIdx = Math.min(Math.floor(i * step), sorted.length - 1);
-
-    // Avoid duplicates — search nearby
-    while (used.has(targetIdx) && targetIdx < sorted.length - 1) targetIdx++;
-    if (used.has(targetIdx)) {
-      // Fallback: find any unused
-      for (let j = 0; j < sorted.length; j++) {
-        if (!used.has(j)) { targetIdx = j; break; }
-      }
-    }
-
-    used.add(targetIdx);
-    picks.push(sorted[targetIdx]);
+    const tierPos = i % nonEmptyTiers.length;
+    const t = nonEmptyTiers[tierPos];
+    const idx = tierIdxs[t] % tiers[t].length;
+    picks.push(tiers[t][idx]);
+    tierIdxs[t]++;
   }
 
   return picks;
