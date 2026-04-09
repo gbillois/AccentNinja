@@ -502,7 +502,7 @@ async function handleRecord() {
 
   const phrase = document.getElementById('phrase-input')?.value?.trim();
   if (!phrase) {
-    setStatus('Tapez une phrase avant d\'enregistrer.', 'warn');
+    setStatus(t('error.emptyPhrase'), 'warn');
     return;
   }
   practiceState.phrase = phrase;
@@ -518,12 +518,20 @@ async function handleRecord() {
 
   try {
     const result = await state.engines.assessment.assess(phrase, status => {
-      if (status === 'connecting') setStatus('Connexion du microphone…');
-      if (status === 'recording')  setStatus('Enregistrement… Parlez maintenant');
+      applyAssessmentStatus(setStatus, status);
     });
 
-    practiceState.status      = 'done';
-    practiceState.result      = result;
+    if (!isValidAssessment(result)) {
+      practiceState.status = 'idle';
+      practiceState.result = null;
+      practiceState.recordingBlob = null;
+      setRecordUI('idle');
+      setStatus(describeAssessmentFailure(result), 'error');
+      return;
+    }
+
+    practiceState.status        = 'done';
+    practiceState.result        = result;
     practiceState.recordingBlob = result.recordingBlob ?? null;
 
     setRecordUI('done');
@@ -532,15 +540,85 @@ async function handleRecord() {
   } catch (err) {
     practiceState.status = 'idle';
     setRecordUI('idle');
-    setStatus(`Erreur : ${err.message}`, 'error');
+    setStatus(describeAssessmentError(err), 'error');
+  }
+}
+
+/** True if the assessment produced a usable score. */
+function isValidAssessment(result) {
+  if (!result) return false;
+  const score = Number(result.pronScore);
+  return Number.isFinite(score) && score > 0;
+}
+
+/** Map an error code (from the engine or a raw.error tag) to a user message. */
+function messageForErrorCode(code) {
+  switch (code) {
+    case 'SilentAudio': return t('error.silentAudio');
+    case 'NoMatch':     return t('error.noMatch');
+    case 'NoMic':       return t('error.noMic');
+    case 'Timeout':     return t('error.timeout');
+    case 'Network':     return t('error.networkError');
+    case 'Aborted':     return t('error.recordFailed');
+    default:            return t('error.recordFailed');
+  }
+}
+
+function describeAssessmentFailure(result) {
+  return messageForErrorCode(result?.raw?.error);
+}
+
+function describeAssessmentError(err) {
+  if (err?.code) return messageForErrorCode(err.code);
+  // getUserMedia rejections from startParallelRecorder are plain Errors
+  // without a code field — detect them by message.
+  if (/access denied|permission|NotAllowed/i.test(err?.message || '')) {
+    return t('error.noMic');
+  }
+  return `${t('error.unknown')}: ${err?.message || err}`;
+}
+
+/**
+ * Apply an engine status event to a status-setter callback.
+ * Handles the shared 'connecting' / 'countdown-N' / 'recording' status keys.
+ */
+function applyAssessmentStatus(setter, status) {
+  switch (status) {
+    case 'connecting':
+      setter(t('engine.connecting'));
+      break;
+    case 'countdown-3':
+      setter(t('engine.countdown3'), 'countdown');
+      break;
+    case 'countdown-2':
+      setter(t('engine.countdown2'), 'countdown');
+      break;
+    case 'countdown-1':
+      setter(t('engine.countdown1'), 'countdown');
+      break;
+    case 'recording':
+      setter(t('engine.recording'));
+      break;
+    default:
+      break;
   }
 }
 
 function setStatus(text, type = '') {
-  const el = document.getElementById('p-status');
+  setStatusEl(document.getElementById('p-status'), text, type);
+}
+
+function setStatusEl(el, text, type = '') {
   if (!el) return;
-  el.textContent  = text;
-  el.className    = `p-status${type ? ` p-status--${type}` : ''}`;
+  el.textContent = text;
+  el.className   = `p-status${type ? ` p-status--${type}` : ''}`;
+  if (type === 'countdown') {
+    // Force a reflow so the pulse animation restarts on each countdown tick,
+    // since only the text content (not the class) changes between 3/2/1.
+    el.style.animation = 'none';
+    void el.offsetWidth;
+    el.style.animation = '';
+  }
 }
 
 function setRecordUI(status) {
@@ -695,31 +773,9 @@ function showClassicResults(result) {
     wordsEl.innerHTML = `<span class="text-muted text-sm">Aucun mot reconnu</span>`;
   }
 
-  // API error banner (shown when score is 0 and an error code is available)
-  const errorBannerEl = document.getElementById('p-error-banner');
-  if (errorBannerEl) {
-    const errorCode = result.raw?.error;
-    if (result.pronScore === 0 && errorCode) {
-      const lang = state.settings?.language ?? 'fr';
-      let suggestion = '';
-      if (errorCode === 'NoMatch') {
-        suggestion = lang === 'en'
-          ? 'Speak louder and closer to the microphone, then try again.'
-          : 'Parlez plus fort et plus près du microphone, puis réessayez.';
-      } else {
-        suggestion = lang === 'en'
-          ? 'Check your microphone and API settings, then try again.'
-          : 'Vérifiez votre microphone et les paramètres API, puis réessayez.';
-      }
-      errorBannerEl.innerHTML = `
-        <span class="p-error-code">Code : ${esc(errorCode)}</span>
-        <span class="p-error-suggestion">${esc(suggestion)}</span>
-      `;
-      errorBannerEl.classList.remove('hidden');
-    } else {
-      errorBannerEl.classList.add('hidden');
-    }
-  }
+  // Zero-score results are rejected in handleRecord before reaching here,
+  // so the error banner element is always hidden.
+  document.getElementById('p-error-banner')?.classList.add('hidden');
 
   // Replay button
   const replayBtn = document.getElementById('replay-btn');
@@ -1018,11 +1074,14 @@ async function handleMultiRecord(text) {
 
   state.engines.tts?.stop?.();
 
-  const ringEl   = document.getElementById('multi-record-ring');
-  const btnEl    = document.getElementById('multi-record-btn');
-  const labelEl  = document.getElementById('multi-record-label');
-  const statusEl = document.getElementById('multi-status');
+  const ringEl    = document.getElementById('multi-record-ring');
+  const btnEl     = document.getElementById('multi-record-btn');
+  const labelEl   = document.getElementById('multi-record-label');
+  const statusEl  = document.getElementById('multi-status');
   const listenBtn = document.getElementById('multi-listen-btn');
+
+  // Clear any retry hint from a previous failed attempt.
+  setStatusEl(statusEl, '');
 
   multiState.status = 'recording';
   btnEl.classList.add('p-record-btn--recording');
@@ -1031,11 +1090,33 @@ async function handleMultiRecord(text) {
   btnEl.disabled = true;
   listenBtn.disabled = true;
 
+  // Helper to put the turn back in a "ready to re-record" state without
+  // advancing the player or storing a score.
+  const resetForRetry = (message) => {
+    multiState.status = 'idle';
+    btnEl.classList.remove('p-record-btn--recording');
+    ringEl?.classList.remove('p-record-ring--active');
+    labelEl.textContent = t('multi.record');
+    btnEl.disabled = false;
+    listenBtn.disabled = false;
+    setStatusEl(statusEl, message, 'error');
+    // Keep the phrase card fully visible so the player can try again.
+    document.getElementById('multi-phrase-card')?.classList.remove('multi-phrase-card--small');
+    document.getElementById('multi-score-reveal')?.classList.add('hidden');
+  };
+
   try {
     const result = await state.engines.assessment.assess(text, status => {
-      if (status === 'connecting') statusEl.textContent = t('engine.connecting');
-      if (status === 'recording')  statusEl.textContent = t('multi.recording');
+      applyAssessmentStatus(
+        (text, type) => setStatusEl(statusEl, text, type),
+        status
+      );
     });
+
+    if (!isValidAssessment(result)) {
+      resetForRetry(describeAssessmentFailure(result));
+      return;
+    }
 
     multiState.status = 'done';
     multiState.lastResult = result;
@@ -1044,18 +1125,18 @@ async function handleMultiRecord(text) {
     const score = Math.round(result.pronScore ?? 0);
     multiState.players[multiState.currentPlayer].scores.push(score);
     multiState.players[multiState.currentPlayer].details.push({
-      pronScore:        Math.round(result.pronScore ?? 0),
-      accuracyScore:    result.accuracyScore != null ? Math.round(result.accuracyScore) : null,
-      fluencyScore:     result.fluencyScore != null ? Math.round(result.fluencyScore) : null,
+      pronScore:         Math.round(result.pronScore ?? 0),
+      accuracyScore:     result.accuracyScore != null ? Math.round(result.accuracyScore) : null,
+      fluencyScore:      result.fluencyScore != null ? Math.round(result.fluencyScore) : null,
       completenessScore: result.completenessScore != null ? Math.round(result.completenessScore) : null,
-      prosodyScore:     result.prosodyScore != null ? Math.round(result.prosodyScore) : null,
+      prosodyScore:      result.prosodyScore != null ? Math.round(result.prosodyScore) : null,
     });
 
     // Update UI
     btnEl.classList.remove('p-record-btn--recording');
     ringEl?.classList.remove('p-record-ring--active');
     labelEl.textContent = '';
-    statusEl.textContent = '';
+    setStatusEl(statusEl, '');
 
     // Show score
     const revealEl = document.getElementById('multi-score-reveal');
@@ -1081,13 +1162,7 @@ async function handleMultiRecord(text) {
       document.getElementById('multi-next-btn').textContent = t('multi.results');
     }
   } catch (err) {
-    multiState.status = 'idle';
-    btnEl.classList.remove('p-record-btn--recording');
-    ringEl?.classList.remove('p-record-ring--active');
-    labelEl.textContent = t('multi.record');
-    btnEl.disabled = false;
-    listenBtn.disabled = false;
-    statusEl.textContent = `Erreur : ${err.message}`;
+    resetForRetry(describeAssessmentError(err));
   }
 }
 
