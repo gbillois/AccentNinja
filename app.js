@@ -51,6 +51,16 @@ const practiceState = {
   recordingBlob: null,
 };
 
+// Level practice session state (Levels 1–10)
+const levelState = {
+  levelNum:     null,   // which level (1–10)
+  itemIndex:    0,      // current item index within level
+  results:      [],     // { item, result } per completed item
+  status:       'idle', // 'idle' | 'recording' | 'done'
+  recordingBlob: null,
+  lastResult:    null,
+};
+
 // Multiplayer state
 const multiState = {
   phase:        'setup',  // 'setup' | 'playing' | 'results'
@@ -141,6 +151,7 @@ function navigate(screen) {
     case 'settings':    renderSettingsScreen();    break;
     case 'setup':       renderSetupScreen();       break;
     case 'practice':    renderPracticeScreen();    break;
+    case 'level':       renderLevelScreen();       break;
     case 'results':     renderResultsScreen();     break;
     case 'multiplayer': renderMultiplayerScreen(); break;
   }
@@ -328,15 +339,19 @@ function renderHomeScreen() {
           ${levels.map(([num, level]) => {
             const hasItems = level.items?.length > 0;
             const locked   = !hasItems;
+            const name     = state.settings.language === 'en'
+              ? (level.nameEn || level.name)
+              : level.name;
             return `
               <button
                 class="level-card ${locked ? 'level-card--locked' : ''}"
                 data-level="${num}"
                 ${locked ? 'aria-disabled="true"' : ''}
-                title="${esc(level.nameEn || level.name)}"
+                title="${esc(name)}"
               >
                 <span class="level-number">${num}</span>
                 <span class="level-icon">${locked ? '🔒' : '⚡'}</span>
+                <span class="level-name">${esc(name)}</span>
               </button>
             `;
           }).join('')}
@@ -353,7 +368,7 @@ function renderHomeScreen() {
         </button>
 
         <div class="card" style="opacity:0.5">
-          <p class="text-muted text-sm text-center">${t('home.levels.coming')}</p>
+          <p class="text-muted text-sm text-center">${t('home.levels.coming5to10')}</p>
         </div>
       </main>
     </div>
@@ -367,7 +382,16 @@ function renderHomeScreen() {
   });
 
   document.querySelectorAll('.level-card:not(.level-card--locked)').forEach(btn => {
-    btn.addEventListener('click', () => navigate('practice'));
+    btn.addEventListener('click', () => {
+      const num = parseInt(btn.dataset.level, 10);
+      levelState.levelNum    = num;
+      levelState.itemIndex   = 0;
+      levelState.results     = [];
+      levelState.status      = 'idle';
+      levelState.lastResult  = null;
+      levelState.recordingBlob = null;
+      navigate('level');
+    });
   });
 }
 
@@ -801,6 +825,464 @@ function phonemeDetail(word) {
   if (!word.phonemes?.length) return word.errorType ?? '';
   const worst = [...word.phonemes].sort((a, b) => a.accuracyScore - b.accuracyScore)[0];
   return worst ? `/${worst.phoneme}/ — ${Math.round(worst.accuracyScore)}%` : '';
+}
+
+// ===========================================================================
+// Level practice screen — Levels 1–10
+// ===========================================================================
+
+function renderLevelScreen() {
+  const level = CORPUS[levelState.levelNum];
+  if (!level) { navigate('home'); return; }
+
+  // If all items done, show summary
+  if (levelState.itemIndex >= level.items.length) {
+    renderLevelSummary();
+    return;
+  }
+
+  const item        = level.items[levelState.itemIndex];
+  const total       = level.items.length;
+  const current     = levelState.itemIndex + 1;
+  const levelName   = state.settings.language === 'en'
+    ? (level.nameEn || level.name)
+    : level.name;
+  const engineLabel = state.settings.assessmentEngine === 'azure'
+    ? `<span class="badge badge-primary">Azure</span>`
+    : `<span class="badge badge-muted">Web Speech</span>`;
+
+  const isLast = levelState.itemIndex === total - 1;
+
+  const screen = document.getElementById('screen-level');
+  screen.innerHTML = `
+    <header class="app-header">
+      <button class="btn-icon" id="level-back-btn" aria-label="${t('nav.back')}">
+        ${ICON_BACK}
+      </button>
+      <h1 class="header-title">${t('home.level')} ${levelState.levelNum}</h1>
+      <div class="header-actions">${engineLabel}</div>
+    </header>
+
+    <div class="screen-body">
+      <div class="practice-level">
+
+        <!-- Progress bar -->
+        <div class="lv-progress">
+          <div class="lv-progress-bar">
+            <div class="lv-progress-fill" style="width:${Math.round((levelState.itemIndex / total) * 100)}%"></div>
+          </div>
+          <span class="lv-progress-label">${t('level.item')} ${current} ${t('level.of')} ${total}</span>
+        </div>
+
+        <!-- Item card -->
+        <div class="lv-item-card">
+          <p class="lv-item-type">${esc(item.type)}</p>
+          <p class="lv-item-text">${esc(item.text)}</p>
+          <p class="lv-item-ipa">${esc(item.ipa)}</p>
+          <p class="lv-item-translation">${esc(item.translation)}</p>
+
+          ${item.focusPhonemes?.length ? `
+            <div class="lv-phonemes">
+              ${item.focusPhonemes.map(p => `<span class="lv-phoneme-badge">/${esc(p)}/</span>`).join('')}
+            </div>
+          ` : ''}
+        </div>
+
+        ${item.tips?.length ? `
+          <details class="lv-tips">
+            <summary class="lv-tips-summary">💡 ${t('level.tips')}</summary>
+            <ul class="lv-tips-list">
+              ${item.tips.map(tip => `<li>${esc(tip)}</li>`).join('')}
+            </ul>
+          </details>
+        ` : ''}
+
+        <!-- Listen button -->
+        <button class="btn btn-secondary p-listen-btn" id="lv-listen-btn">
+          <span id="lv-listen-icon">🔊</span> ${t('level.listen')}
+        </button>
+
+        <div class="p-divider">puis répétez</div>
+
+        <!-- Record button -->
+        <div class="p-record-wrap">
+          <button class="p-record-btn" id="lv-record-btn" aria-label="${t('level.record')}">
+            <span class="p-record-ring" id="lv-record-ring"></span>
+            <span class="p-record-dot" id="lv-record-dot"></span>
+          </button>
+          <span class="p-record-label" id="lv-record-label">${t('level.record')}</span>
+        </div>
+
+        <!-- Status -->
+        <div class="p-status" id="lv-status" aria-live="polite"></div>
+
+        <!-- Results (hidden until done) -->
+        <div class="p-results hidden" id="lv-results">
+          <div class="p-scores" id="lv-scores"></div>
+
+          <div class="p-words-wrap">
+            <p class="p-label">${t('level.wordAnalysis')}</p>
+            <div class="p-words" id="lv-words"></div>
+          </div>
+
+          <div class="p-actions">
+            <button class="btn btn-ghost btn-sm" id="lv-replay-btn" style="display:none">
+              ▶ Réécouter mon enregistrement
+            </button>
+            <button class="btn btn-secondary" id="lv-retry-btn">🔄 ${t('level.retry')}</button>
+            <button class="btn btn-primary" id="lv-next-btn">
+              ${isLast ? t('level.finish') : t('level.next')} →
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  `;
+
+  // Back button
+  document.getElementById('level-back-btn').addEventListener('click', () => {
+    state.engines.tts?.stop?.();
+    state.engines.assessment?.stop?.();
+    levelState.status = 'idle';
+    navigate('home');
+  });
+
+  // Listen
+  document.getElementById('lv-listen-btn').addEventListener('click', () => handleLvListen(item.text));
+
+  // Record
+  document.getElementById('lv-record-btn').addEventListener('click', () => handleLvRecord(item));
+
+  // Retry
+  document.getElementById('lv-retry-btn').addEventListener('click', resetLvPractice);
+
+  // Next / Finish
+  document.getElementById('lv-next-btn').addEventListener('click', advanceLevelItem);
+
+  // Restore result if navigating back to a completed item
+  if (levelState.status === 'done' && levelState.lastResult) {
+    showLvResults(levelState.lastResult);
+  }
+}
+
+async function handleLvListen(text) {
+  const btn    = document.getElementById('lv-listen-btn');
+  const iconEl = document.getElementById('lv-listen-icon');
+  if (!btn) return;
+  btn.disabled    = true;
+  iconEl.textContent = '⏳';
+  try {
+    await state.engines.tts.speak(text);
+  } catch (err) {
+    showToast(`Erreur TTS : ${err.message}`, 'error');
+  } finally {
+    btn.disabled       = false;
+    iconEl.textContent = '🔊';
+  }
+}
+
+async function handleLvRecord(item) {
+  if (levelState.status === 'recording') return;
+
+  state.engines.tts?.stop?.();
+  document.getElementById('lv-results')?.classList.add('hidden');
+
+  setLvRecordUI('recording');
+  levelState.status = 'recording';
+
+  const statusEl = document.getElementById('lv-status');
+
+  try {
+    const result = await state.engines.assessment.assess(item.text, status => {
+      applyAssessmentStatus(
+        (text, type) => setStatusEl(statusEl, text, type),
+        status
+      );
+    });
+
+    if (!isValidAssessment(result)) {
+      levelState.status = 'idle';
+      levelState.lastResult = null;
+      setLvRecordUI('idle');
+      setStatusEl(statusEl, describeAssessmentFailure(result), 'error');
+      return;
+    }
+
+    levelState.status        = 'done';
+    levelState.lastResult    = result;
+    levelState.recordingBlob = result.recordingBlob ?? null;
+
+    setLvRecordUI('done');
+    setStatusEl(statusEl, '');
+    showLvResults(result);
+  } catch (err) {
+    levelState.status = 'idle';
+    setLvRecordUI('idle');
+    setStatusEl(statusEl, describeAssessmentError(err), 'error');
+  }
+}
+
+function setLvRecordUI(status) {
+  const btn       = document.getElementById('lv-record-btn');
+  const ring      = document.getElementById('lv-record-ring');
+  const label     = document.getElementById('lv-record-label');
+  const listenBtn = document.getElementById('lv-listen-btn');
+  if (!btn) return;
+
+  btn.classList.toggle('p-record-btn--recording',  status === 'recording');
+  btn.classList.toggle('p-record-btn--processing', status === 'processing');
+  ring?.classList.toggle('p-record-ring--active',  status === 'recording');
+
+  if (status === 'recording') {
+    label.textContent  = t('level.recording');
+    btn.disabled       = true;
+    if (listenBtn) listenBtn.disabled = true;
+  } else if (status === 'processing') {
+    label.textContent  = t('engine.processing');
+    btn.disabled       = true;
+    if (listenBtn) listenBtn.disabled = true;
+  } else {
+    label.textContent  = t('level.record');
+    btn.disabled       = false;
+    if (listenBtn) listenBtn.disabled = false;
+  }
+}
+
+function resetLvPractice() {
+  levelState.status        = 'idle';
+  levelState.lastResult    = null;
+  levelState.recordingBlob = null;
+  setLvRecordUI('idle');
+  const statusEl = document.getElementById('lv-status');
+  if (statusEl) setStatusEl(statusEl, '');
+  document.getElementById('lv-results')?.classList.add('hidden');
+}
+
+function showLvResults(result) {
+  if (state.settings.resultsDisplay === 'ninja') {
+    showLvNinjaResults(result);
+    return;
+  }
+  showLvClassicResults(result);
+}
+
+function showLvNinjaResults(result) {
+  if (!state.audioCtx) {
+    try { state.audioCtx = new AudioContext(); } catch (_) {}
+  }
+  if (state.audioCtx?.state === 'suspended') state.audioCtx.resume().catch(() => {});
+
+  const level   = CORPUS[levelState.levelNum];
+  const item    = level.items[levelState.itemIndex];
+  const isLast  = levelState.itemIndex === level.items.length - 1;
+  const container = document.getElementById('screen-level');
+
+  function onListen() {
+    state.engines.tts?.speak(item.text).catch(err => showToast(`Erreur TTS : ${err.message}`, 'error'));
+  }
+  function onListenSlow() {
+    if (window.speechSynthesis && state.settings.ttsEngine === 'web') {
+      if (window.speechSynthesis.paused) window.speechSynthesis.resume();
+      window.speechSynthesis.cancel();
+      const doSlow = () => {
+        const utt   = new SpeechSynthesisUtterance(item.text);
+        const lang  = state.settings.accentTarget === 'uk' ? 'en-GB' : 'en-US';
+        const voices = window.speechSynthesis.getVoices().filter(v => v.lang.startsWith(lang));
+        if (voices.length) utt.voice = voices[0];
+        utt.lang = lang;
+        utt.rate = 0.7;
+        window.speechSynthesis.speak(utt);
+      };
+      setTimeout(doSlow, 50);
+    } else {
+      state.engines.tts?.speak(item.text).catch(err => showToast(`Erreur TTS : ${err.message}`, 'error'));
+    }
+  }
+
+  // Store result before ninja animation consumes the screen
+  levelState.results.push({ item, result });
+
+  playNinjaAnimation(container, result, {
+    audioCtx:      state.audioCtx,
+    phrase:        item.text,
+    recordingBlob: levelState.recordingBlob,
+    onListen,
+    onListenSlow,
+    onRetry: () => {
+      // Remove the result we just pushed so it isn't double-counted on retry
+      levelState.results.pop();
+      levelState.status        = 'idle';
+      levelState.lastResult    = null;
+      levelState.recordingBlob = null;
+      renderLevelScreen();
+    },
+    onNext: () => {
+      // result already pushed above
+      levelState.itemIndex++;
+      levelState.status        = 'idle';
+      levelState.lastResult    = null;
+      levelState.recordingBlob = null;
+      renderLevelScreen();
+    },
+    onComplete: () => {},
+  });
+}
+
+function showLvClassicResults(result) {
+  const resultsEl = document.getElementById('lv-results');
+  if (!resultsEl) return;
+  resultsEl.classList.remove('hidden');
+
+  // Score items
+  const scoresEl   = document.getElementById('lv-scores');
+  const scoreItems = [
+    { label: t('results.globalScore'), value: result.pronScore,         icon: '🏆' },
+    { label: t('results.accuracy'),    value: result.accuracyScore,     icon: '🎯' },
+    { label: t('results.fluency'),     value: result.fluencyScore,      icon: '🌊' },
+    { label: t('results.completeness'),value: result.completenessScore, icon: '✅' },
+  ];
+  if (result.prosodyScore != null) {
+    scoreItems.push({ label: t('results.prosody'), value: result.prosodyScore, icon: '🎵' });
+  }
+
+  scoresEl.innerHTML = scoreItems.map(item => {
+    const v   = Math.round(item.value ?? 0);
+    const cls = scoreClass(v);
+    return `
+      <div class="p-score-item">
+        <div class="p-score-top">
+          <span class="p-score-label">${item.icon} ${item.label}</span>
+          <span class="p-score-value p-score-value--${cls}">${v}</span>
+        </div>
+        <div class="p-score-bar">
+          <div class="p-score-fill p-score-fill--${cls}" style="width:${v}%"></div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Word pills
+  const wordsEl = document.getElementById('lv-words');
+  if (result.words?.length) {
+    wordsEl.innerHTML = result.words.map(w => {
+      const type = (w.errorType ?? 'None').toLowerCase();
+      const tip  = phonemeDetail(w);
+      return `<span class="p-word p-word--${type}" title="${esc(tip)}">${esc(w.word)}</span>`;
+    }).join(' ');
+  } else if (result.recognizedText) {
+    wordsEl.innerHTML = `<span class="text-muted text-sm">"${esc(result.recognizedText)}"</span>`;
+  } else {
+    wordsEl.innerHTML = `<span class="text-muted text-sm">Aucun mot reconnu</span>`;
+  }
+
+  // Replay button
+  const replayBtn = document.getElementById('lv-replay-btn');
+  if (replayBtn && levelState.recordingBlob) {
+    replayBtn.style.display = 'inline-flex';
+    replayBtn.onclick = () => {
+      const url   = URL.createObjectURL(levelState.recordingBlob);
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      audio.play();
+    };
+  }
+}
+
+function advanceLevelItem() {
+  const level  = CORPUS[levelState.levelNum];
+  const result = levelState.lastResult;
+
+  // Record result for this item (classic mode; ninja mode already pushed)
+  if (result && state.settings.resultsDisplay !== 'ninja') {
+    levelState.results.push({ item: level.items[levelState.itemIndex], result });
+  }
+
+  levelState.itemIndex++;
+  levelState.status        = 'idle';
+  levelState.lastResult    = null;
+  levelState.recordingBlob = null;
+
+  renderLevelScreen(); // will call renderLevelSummary() when itemIndex >= items.length
+}
+
+// ---------------------------------------------------------------------------
+// Level summary — shown after the last item is completed
+// ---------------------------------------------------------------------------
+
+function renderLevelSummary() {
+  const level     = CORPUS[levelState.levelNum];
+  const levelName = state.settings.language === 'en'
+    ? (level.nameEn || level.name)
+    : level.name;
+
+  const scores   = levelState.results.map(r => Math.round(r.result?.pronScore ?? 0));
+  const avgScore = scores.length
+    ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+    : 0;
+  const avgCls   = scoreClass(avgScore);
+
+  const screen = document.getElementById('screen-level');
+  screen.innerHTML = `
+    <header class="app-header">
+      <h1 class="header-title">${t('home.level')} ${levelState.levelNum} — ${esc(levelName)}</h1>
+    </header>
+
+    <div class="screen-body">
+      <div class="lv-summary">
+
+        <div class="lv-summary-hero">
+          <div class="lv-summary-trophy">🎯</div>
+          <h2 class="lv-summary-title">${t('level.complete.title')}</h2>
+          <div class="lv-summary-avg">
+            <span class="lv-summary-avg-label">${t('level.complete.score')}</span>
+            <span class="lv-summary-avg-value p-score-value--${avgCls}">${avgScore}</span>
+          </div>
+          <div class="p-score-bar" style="max-width:200px;margin:0 auto">
+            <div class="p-score-fill p-score-fill--${avgCls}" style="width:${avgScore}%"></div>
+          </div>
+        </div>
+
+        <!-- Per-item scores -->
+        ${levelState.results.length ? `
+          <div class="lv-summary-items">
+            ${levelState.results.map(({ item, result }, i) => {
+              const s   = Math.round(result?.pronScore ?? 0);
+              const cls = scoreClass(s);
+              return `
+                <div class="lv-summary-row">
+                  <span class="lv-summary-row-num">${i + 1}</span>
+                  <span class="lv-summary-row-text">${esc(item.text)}</span>
+                  <span class="lv-summary-row-score p-score-value--${cls}">${s}</span>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        ` : ''}
+
+        <div class="lv-summary-actions">
+          <button class="btn btn-secondary" id="lv-retry-level-btn">
+            🔄 ${t('level.complete.retryLevel')}
+          </button>
+          <button class="btn btn-primary btn-lg" id="lv-home-btn">
+            ${t('level.complete.home')}
+          </button>
+        </div>
+
+      </div>
+    </div>
+  `;
+
+  document.getElementById('lv-retry-level-btn').addEventListener('click', () => {
+    levelState.itemIndex   = 0;
+    levelState.results     = [];
+    levelState.status      = 'idle';
+    levelState.lastResult  = null;
+    levelState.recordingBlob = null;
+    renderLevelScreen();
+  });
+
+  document.getElementById('lv-home-btn').addEventListener('click', () => navigate('home'));
 }
 
 // ===========================================================================
@@ -1710,7 +2192,7 @@ async function init() {
   } else {
     // Honour hash if present
     const hash = window.location.hash.slice(1);
-    const validScreens = ['home', 'settings', 'practice', 'results', 'multiplayer'];
+    const validScreens = ['home', 'settings', 'practice', 'level', 'results', 'multiplayer'];
     navigate(validScreens.includes(hash) ? hash : 'home');
   }
 
