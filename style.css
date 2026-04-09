@@ -8,29 +8,52 @@
    =========================================================================== */
 
 :root {
-  /* --- Colours (dark theme default) --- */
-  --color-bg:           #0f172a;
-  --color-surface:      #1e293b;
-  --color-surface-2:    #334155;
-  --color-surface-3:    #475569;
-  --color-border:       #334155;
-  --color-border-subtle:#1e293b;
+  /* --- Colours (dark theme default — AccentNinja "Speak & Slash" palette) ---
+   * Backdrop: deep indigo night sky
+   * Primary (play):     torii red      — main CTA
+   * Social (multiplayer): violet       — social / versus
+   * Progression:        sky blue/white — unlocked progress
+   * Locked:             muted graphite — disabled / gated
+   */
+  --color-bg:           #0f0a24;
+  --color-surface:      #1a1438;
+  --color-surface-2:    #241a4a;
+  --color-surface-3:    #33265e;
+  --color-border:       #2e2250;
+  --color-border-subtle:#1a1438;
 
-  --color-text:         #f1f5f9;
-  --color-text-muted:   #94a3b8;
-  --color-text-subtle:  #64748b;
+  --color-text:         #ffedf2;
+  --color-text-muted:   #b4a6c8;
+  --color-text-subtle:  #7b6d92;
 
-  --color-primary:      #6366f1;
-  --color-primary-hover:#818cf8;
-  --color-primary-dim:  #312e81;
+  /* Primary = play = torii red */
+  --color-primary:      #e8274f;
+  --color-primary-hover:#ff4d70;
+  --color-primary-dim:  #3d0a1a;
   --color-primary-text: #ffffff;
 
+  /* Social = multiplayer = violet */
+  --color-social:       #8b5cf6;
+  --color-social-hover: #a78bfa;
+  --color-social-dim:   #2a1055;
+  --color-social-text:  #ffffff;
+
+  /* Progression = unlocked / current level = sky-blue */
+  --color-progression:      #7dd3fc;
+  --color-progression-hover:#bae6fd;
+  --color-progression-dim:  #0b2a45;
+
+  /* Locked = gated level = graphite */
+  --color-locked:       #2a2340;
+  --color-locked-border:#3d3556;
+  --color-locked-text:  #5a5172;
+
   --color-success:      #22c55e;
-  --color-success-bg:   #14532d;
+  --color-success-bg:   #0f2e1f;
   --color-warning:      #f59e0b;
-  --color-warning-bg:   #451a03;
+  --color-warning-bg:   #3a1e04;
   --color-error:        #ef4444;
-  --color-error-bg:     #450a0a;
+  --color-error-bg:     #3a0a10;
   --color-info:         #38bdf8;
 
   /* Score colour bands */
@@ -89,18 +112,24 @@
 }
 
 [data-theme="light"] {
-  --color-bg:           #f8fafc;
+  --color-bg:           #fdf7f9;
   --color-surface:      #ffffff;
-  --color-surface-2:    #f1f5f9;
-  --color-surface-3:    #e2e8f0;
-  --color-border:       #e2e8f0;
-  --color-border-subtle:#f1f5f9;
+  --color-surface-2:    #fcefef;
+  --color-surface-3:    #f5dfe3;
+  --color-border:       #eed1d6;
+  --color-border-subtle:#f7e5e8;
 
-  --color-text:         #0f172a;
-  --color-text-muted:   #475569;
-  --color-text-subtle:  #94a3b8;
+  --color-text:         #1a0a15;
+  --color-text-muted:   #6d4a56;
+  --color-text-subtle:  #a1808c;
 
-  --color-primary-dim:  #e0e7ff;
+  --color-primary-dim:  #ffe4ea;
+  --color-social-dim:   #ede4ff;
+  --color-progression-dim: #dff1ff;
+  --color-locked:       #ece4f0;
+  --color-locked-border:#dcd1e3;
+  --color-locked-text:  #a098ae;
+
   --color-success-bg:   #f0fdf4;
   --color-warning-bg:   #fffbeb;
   --color-error-bg:     #fef2f2;
@@ -156,122 +185,13 @@
   --shadow-lg: 0 8px 24px rgba(232,39,79,0.2),  0 4px 16px rgba(0,0,0,0.75);
 }
 
-/* --- Splash screen: rising sun atmosphere --- */
-[data-theme="japan"] #screen-splash {
-  background:
-    radial-gradient(circle at 50% 42%, rgba(232,39,79,0.18) 0%, transparent 50%),
-    radial-gradient(circle at 50% 42%, rgba(232,39,79,0.08) 0%, transparent 70%),
-    var(--color-bg);
-  overflow: hidden;
-}
-
-/* Rising sun glow disc behind the logo */
-[data-theme="japan"] .splash-content {
-  position: relative;
-  z-index: 1;
-}
-[data-theme="japan"] .splash-content::before {
-  content: '';
-  position: absolute;
-  width: 200px;
-  height: 200px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(232,39,79,0.22) 0%, rgba(232,39,79,0.06) 55%, transparent 70%);
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, calc(-50% - 20px));
-  pointer-events: none;
-  z-index: -1;
-}
-
-/* Sakura petal 1 (top-left) */
-[data-theme="japan"] #screen-splash::before {
-  content: '';
-  position: absolute;
-  width: 13px;
-  height: 18px;
-  background: rgba(232,39,79,0.5);
-  border-radius: 50% 50% 50% 50% / 30% 30% 70% 70%;
-  top: 12%;
-  left: 18%;
-  transform: rotate(-30deg);
-  animation: sakuraDrift1 9s ease-in-out infinite;
-  pointer-events: none;
-}
-
-/* Sakura petal 2 (top-right) */
-[data-theme="japan"] #screen-splash::after {
-  content: '';
-  position: absolute;
-  width: 10px;
-  height: 14px;
-  background: rgba(255,77,112,0.45);
-  border-radius: 50% 50% 50% 50% / 30% 30% 70% 70%;
-  top: 18%;
-  right: 22%;
-  transform: rotate(45deg);
-  animation: sakuraDrift2 11s ease-in-out infinite 2.5s;
-  pointer-events: none;
-}
-
-@keyframes sakuraDrift1 {
-  0%   { transform: rotate(-30deg)  translateY(0)    translateX(0);    opacity: 0.55; }
-  25%  { transform: rotate(-18deg)  translateY(35px)  translateX(18px);  opacity: 0.7; }
-  55%  { transform: rotate(-38deg)  translateY(85px)  translateX(-12px); opacity: 0.45; }
-  80%  { transform: rotate(-12deg)  translateY(140px) translateX(22px);  opacity: 0.25; }
-  100% { transform: rotate(-30deg)  translateY(200px) translateX(8px);   opacity: 0; }
-}
-
-@keyframes sakuraDrift2 {
-  0%   { transform: rotate(45deg)  translateY(0)    translateX(0);    opacity: 0.4; }
-  30%  { transform: rotate(58deg)  translateY(45px)  translateX(-22px); opacity: 0.6; }
-  65%  { transform: rotate(38deg)  translateY(100px) translateX(12px);  opacity: 0.35; }
-  100% { transform: rotate(62deg)  translateY(190px) translateX(-18px); opacity: 0; }
-}
-
-/* Tint the SVG logo toward red */
-[data-theme="japan"] .splash-logo {
-  filter: hue-rotate(130deg) brightness(0.9);
-}
+/* Splash screen scene art already carries the night sky, moon, petals,
+   Mt. Fuji, pagodas, ninja and sliced fruit — no per-theme overrides needed. */
 
 /* --- Header: subtle crimson bottom border + dark gradient --- */
 [data-theme="japan"] .app-header {
   border-bottom-color: rgba(232,39,79,0.35);
   background: linear-gradient(180deg, rgba(13,5,8,0.98) 0%, rgba(26,12,18,0.98) 100%);
-}
-
-/* --- Primary button: torii-red gradient with slash-shine effect --- */
-[data-theme="japan"] .btn-primary {
-  background: linear-gradient(135deg, #e8274f 0%, #c01e3e 100%);
-  box-shadow: 0 2px 12px rgba(232,39,79,0.4);
-  overflow: hidden;
-  position: relative;
-}
-[data-theme="japan"] .btn-primary::after {
-  content: '';
-  position: absolute;
-  top: -50%;
-  left: -110%;
-  width: 55%;
-  height: 200%;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent);
-  transform: skewX(-20deg);
-  transition: left 0.5s ease;
-  pointer-events: none;
-}
-[data-theme="japan"] .btn-primary:hover {
-  background: linear-gradient(135deg, #ff4d70 0%, #e8274f 100%);
-  box-shadow: 0 4px 20px rgba(232,39,79,0.55);
-}
-[data-theme="japan"] .btn-primary:hover::after {
-  left: 150%;
-}
-
-/* --- Level cards: crimson glow on hover --- */
-[data-theme="japan"] .level-card:hover,
-[data-theme="japan"] .quick-start-card:hover {
-  border-color: rgba(232,39,79,0.5);
-  box-shadow: 0 0 18px rgba(232,39,79,0.18);
 }
 
 /* --- Settings section: subtle left accent border --- */
@@ -412,20 +332,31 @@ input, select, textarea { font: inherit; color: inherit; }
   font-weight: 600;
   line-height: 1;
   transition: background var(--transition-fast), color var(--transition-fast),
+              box-shadow var(--transition-fast),
               opacity var(--transition-fast), transform var(--transition-fast);
   white-space: nowrap;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
+  position: relative;
+  overflow: hidden;
 }
 
 .btn:active { transform: scale(0.97); }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
 
+/* --- Primary CTA = PLAY = torii red --- */
 .btn-primary {
-  background: var(--color-primary);
+  background: linear-gradient(135deg, var(--color-primary) 0%, #c01e3e 100%);
   color: var(--color-primary-text);
+  box-shadow: 0 2px 10px rgba(232,39,79,0.32);
 }
-.btn-primary:hover { background: var(--color-primary-hover); }
+.btn-primary:hover {
+  background: linear-gradient(135deg, var(--color-primary-hover) 0%, var(--color-primary) 100%);
+  box-shadow: 0 4px 22px rgba(232,39,79,0.55), 0 0 0 1px rgba(255,77,112,0.35) inset;
+}
+.btn-primary:active {
+  box-shadow: 0 1px 6px rgba(232,39,79,0.6), 0 0 24px rgba(255,77,112,0.35);
+}
 
 .btn-secondary {
   background: var(--color-surface-2);
@@ -481,6 +412,102 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .btn-icon:hover { background: var(--color-surface-2); color: var(--color-text); }
 
+/* ---------------------------------------------------------------------------
+   Slashable: shared interactive pattern (glow + slash sweep + click flash)
+   Applied to primary buttons, quick-start card, multiplayer button, and
+   available level cards.
+   --------------------------------------------------------------------------- */
+
+.btn-primary,
+.quick-start-card,
+.multi-home-btn,
+.level-card:not(.level-card--locked) {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* Slash sweep — a diagonal shine that travels across on hover/touch */
+.btn-primary::before,
+.quick-start-card::before,
+.multi-home-btn::before,
+.level-card:not(.level-card--locked)::before {
+  content: '';
+  position: absolute;
+  top: -20%;
+  left: -120%;
+  width: 55%;
+  height: 140%;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.22) 50%,
+    transparent 100%
+  );
+  transform: skewX(-22deg);
+  transition: left 0.55s ease;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.btn-primary:hover::before,
+.btn-primary:focus-visible::before,
+.quick-start-card:hover::before,
+.quick-start-card:focus-visible::before,
+.multi-home-btn:hover::before,
+.multi-home-btn:focus-visible::before,
+.level-card:not(.level-card--locked):hover::before,
+.level-card:not(.level-card--locked):focus-visible::before {
+  left: 160%;
+}
+
+/* Slash click — a crisp white blade that flashes across on press */
+.btn-primary::after,
+.quick-start-card::after,
+.multi-home-btn::after,
+.level-card:not(.level-card--locked)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 42%,
+    rgba(255, 255, 255, 0.92) 49%,
+    rgba(255, 255, 255, 0.92) 51%,
+    transparent 58%
+  );
+  opacity: 0;
+  pointer-events: none;
+  z-index: 2;
+  transform: translateX(-30%);
+}
+
+.btn-primary:active::after,
+.quick-start-card:active::after,
+.multi-home-btn:active::after,
+.level-card:not(.level-card--locked):active::after {
+  animation: slashFlash 0.42s ease;
+}
+
+@keyframes slashFlash {
+  0%   { opacity: 0;   transform: translateX(-30%); }
+  30%  { opacity: 1; }
+  100% { opacity: 0;   transform: translateX(35%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-primary::before,
+  .quick-start-card::before,
+  .multi-home-btn::before,
+  .level-card::before,
+  .btn-primary::after,
+  .quick-start-card::after,
+  .multi-home-btn::after,
+  .level-card::after {
+    display: none;
+  }
+}
+
 /* ===========================================================================
    6. Form Controls
    =========================================================================== */
@@ -516,7 +543,7 @@ input, select, textarea { font: inherit; color: inherit; }
 .form-input:focus,
 .form-select:focus {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 25%, transparent);
   outline: none;
 }
 
@@ -635,52 +662,76 @@ input, select, textarea { font: inherit; color: inherit; }
 .status-dot--offline { background: var(--color-error); }
 
 /* ===========================================================================
-   10. Splash Screen
+   10. Splash Screen — AccentNinja "Speak & Slash" poster
    =========================================================================== */
 
 #screen-splash {
+  position: relative;
   align-items: center;
   justify-content: center;
-  background: var(--color-bg);
+  /* Deep indigo night-sky backdrop (matches the splash scene gradient) */
+  background:
+    radial-gradient(ellipse at 80% 14%, rgba(255,243,200,0.10) 0%, transparent 55%),
+    radial-gradient(ellipse at 50% 55%, rgba(232,39,79,0.12) 0%, transparent 60%),
+    linear-gradient(180deg, #1a1648 0%, #221a5c 42%, #140a38 72%, #06021a 100%);
+  overflow: hidden;
 }
 
-.splash-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-4);
-  text-align: center;
-  padding: var(--space-8);
-  animation: splashFade 0.4s ease;
+/* Full-bleed scene illustration */
+.splash-scene {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  pointer-events: none;
+  user-select: none;
+  animation: splashSceneFade 0.6s ease both;
 }
 
-@keyframes splashFade {
-  from { opacity: 0; transform: scale(0.95); }
+@keyframes splashSceneFade {
+  from { opacity: 0; transform: scale(1.04); }
   to   { opacity: 1; transform: scale(1); }
 }
 
-.splash-logo {
-  width: 80px;
-  height: 80px;
+/* Status + spinner pinned to the bottom, above the fruit */
+.splash-content {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: max(var(--space-10), env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  text-align: center;
+  padding: var(--space-4);
+  animation: splashFade 0.6s ease 0.2s both;
+  z-index: 1;
 }
 
-.splash-title {
-  font-size: var(--text-3xl);
-  font-weight: 800;
-  letter-spacing: -0.02em;
+@keyframes splashFade {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .splash-subtitle {
   font-size: var(--text-sm);
-  color: var(--color-text-muted);
+  font-weight: 600;
+  color: #ffedf2;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-shadow: 0 2px 8px rgba(6,2,26,0.8), 0 0 16px rgba(232,39,79,0.25);
 }
 
 .splash-spinner {
-  width: 24px;
-  height: 24px;
-  border: 2px solid var(--color-surface-3);
-  border-top-color: var(--color-primary);
+  width: 26px;
+  height: 26px;
+  border: 2px solid rgba(255,237,242,0.18);
+  border-top-color: #e8274f;
   border-radius: var(--radius-full);
+  box-shadow: 0 0 12px rgba(232,39,79,0.45);
   animation: spin 0.8s linear infinite;
 }
 
@@ -802,28 +853,63 @@ input, select, textarea { font: inherit; color: inherit; }
   gap: var(--space-1);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  transition: background var(--transition-fast), transform var(--transition-fast);
+  color: var(--color-text);
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+              box-shadow var(--transition-fast), transform var(--transition-fast);
   cursor: pointer;
   position: relative;
   overflow: hidden;
 }
 
+/* Hover glow on any available (non-locked) card */
+.level-card:not(.level-card--locked):hover {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px rgba(232,39,79,0.35),
+              0 0 18px rgba(232,39,79,0.28);
+  transform: translateY(-1px);
+}
 .level-card:active { transform: scale(0.95); }
 
+/* Locked = dark graphite, visibly gated */
 .level-card--locked {
-  opacity: 0.5;
-  cursor: default;
+  background: var(--color-locked);
+  border-color: var(--color-locked-border);
+  color: var(--color-locked-text);
+  opacity: 1;
+  cursor: not-allowed;
+  filter: saturate(0.4);
+}
+.level-card--locked:hover {
+  border-color: var(--color-locked-border);
+  box-shadow: none;
+  transform: none;
 }
 .level-card--locked:active { transform: none; }
 
+/* Current / unlocked in progress = sky-blue progression */
 .level-card--active {
-  border-color: var(--color-primary);
-  background: var(--color-primary-dim);
+  border-color: var(--color-progression);
+  background: linear-gradient(155deg,
+              var(--color-progression-dim) 0%,
+              var(--color-surface) 85%);
+  color: var(--color-text);
+  box-shadow: 0 0 0 1px rgba(125,211,252,0.35),
+              0 0 16px rgba(125,211,252,0.22);
+}
+.level-card--active:hover {
+  border-color: var(--color-progression-hover);
+  box-shadow: 0 0 0 1px rgba(125,211,252,0.55),
+              0 0 24px rgba(125,211,252,0.4);
 }
 
 .level-card--complete {
   border-color: var(--color-success);
   background: var(--color-success-bg);
+}
+.level-card--complete:hover {
+  border-color: var(--color-success);
+  box-shadow: 0 0 0 1px rgba(34,197,94,0.45),
+              0 0 18px rgba(34,197,94,0.3);
 }
 
 .level-number {
@@ -842,19 +928,27 @@ input, select, textarea { font: inherit; color: inherit; }
   font-size: 8px;
 }
 
-/* Quick start button */
+/* Quick start button — big red PLAY CTA */
 .quick-start-card {
-  background: linear-gradient(135deg, var(--color-primary-dim), var(--color-surface));
-  border: 1px solid var(--color-primary);
+  background: linear-gradient(135deg, var(--color-primary) 0%, #b01331 100%);
+  border: 1px solid var(--color-primary-hover);
   border-radius: var(--radius-xl);
   padding: var(--space-5);
   display: flex;
   align-items: center;
   justify-content: space-between;
+  color: var(--color-primary-text);
   cursor: pointer;
-  transition: filter var(--transition-fast);
+  box-shadow: 0 4px 18px rgba(232,39,79,0.35);
+  transition: filter var(--transition-fast), box-shadow var(--transition-fast),
+              transform var(--transition-fast);
 }
-.quick-start-card:hover { filter: brightness(1.1); }
+.quick-start-card:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 6px 28px rgba(232,39,79,0.55),
+              0 0 0 1px rgba(255,77,112,0.5) inset;
+}
+.quick-start-card:active { transform: scale(0.98); }
 
 /* ===========================================================================
    13. Settings Screen
@@ -986,7 +1080,7 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .p-textarea:focus {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 25%, transparent);
   outline: none;
 }
 
@@ -1319,22 +1413,32 @@ input, select, textarea { font: inherit; color: inherit; }
    17. Multiplayer Mode
    =========================================================================== */
 
-/* Home screen button */
+/* Home screen button — SOCIAL / MULTIPLAYER = violet */
 .multi-home-btn {
   display: flex;
   align-items: center;
   gap: var(--space-4);
   width: 100%;
-  background: linear-gradient(135deg, #4f46e520 0%, #7c3aed20 100%);
-  border: 1px solid #7c3aed;
+  background: linear-gradient(135deg,
+              var(--color-social-dim) 0%,
+              color-mix(in srgb, var(--color-social) 18%, var(--color-surface)) 100%);
+  border: 1px solid var(--color-social);
   border-radius: var(--radius-xl);
   padding: var(--space-4) var(--space-5);
   cursor: pointer;
   text-align: left;
-  transition: filter var(--transition-fast), transform var(--transition-fast);
+  color: var(--color-text);
+  box-shadow: 0 2px 14px rgba(139,92,246,0.22);
+  transition: filter var(--transition-fast), transform var(--transition-fast),
+              box-shadow var(--transition-fast), border-color var(--transition-fast);
   margin-top: var(--space-4);
 }
-.multi-home-btn:hover  { filter: brightness(1.15); }
+.multi-home-btn:hover {
+  filter: brightness(1.08);
+  border-color: var(--color-social-hover);
+  box-shadow: 0 6px 24px rgba(139,92,246,0.45),
+              0 0 0 1px rgba(167,139,250,0.4) inset;
+}
 .multi-home-btn:active { transform: scale(0.98); }
 
 .multi-home-icon { font-size: 28px; flex-shrink: 0; }
