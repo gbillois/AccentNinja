@@ -59,40 +59,209 @@ function normalizeWords(text) {
 
 // ---------------------------------------------------------------------------
 // Parallel MediaRecorder setup (used by both assessment engines)
+//
+// Also runs an AnalyserNode in parallel to monitor audio levels so we can
+// detect silent recordings (mic muted, hardware failure, user didn't speak).
 // ---------------------------------------------------------------------------
+
+/** RMS threshold below which audio is considered silent. Empirical. */
+const SILENCE_RMS_THRESHOLD = 0.012;
+
+/** Minimum duration of "speech-level" audio (ms) to consider a recording valid. */
+const MIN_SPEECH_DURATION_MS = 250;
+
+/** Per-step duration of the 3-2-1 warm-up countdown (ms). */
+const COUNTDOWN_STEP_MS = 700;
+
+/**
+ * Run a 3-2-1 countdown, emitting status events for the UI to display.
+ * Used by both assessment engines to give the mic time to initialise before
+ * the user is expected to speak.
+ */
+async function runCountdown(onStatus) {
+  onStatus('countdown-3');
+  await sleep(COUNTDOWN_STEP_MS);
+  onStatus('countdown-2');
+  await sleep(COUNTDOWN_STEP_MS);
+  onStatus('countdown-1');
+  await sleep(COUNTDOWN_STEP_MS);
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 async function startParallelRecorder() {
   let stream = null;
   let mediaRecorder = null;
+  let audioCtx = null;
+  let analyser = null;
+  let source = null;
+  let sampleBuf = null;
+  let pollTimer = null;
+  let maxRms = 0;
+  let speechMs = 0;
+  let lastSampleAt = 0;
   const chunks = [];
 
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl:  true,
+        channelCount:     1,
+      },
+    });
+
+    // Some devices grant permission but hand back a dead/muted track when
+    // a different input is physically selected — fail fast so the user sees
+    // a real error instead of a silent recording.
+    const track = stream.getAudioTracks()[0];
+    if (!track || track.readyState !== 'live') {
+      throw new Error('Microphone track is not live');
+    }
+    if (track.muted) {
+      console.warn('[AccentNinja] Microphone track reports muted=true');
+    }
+
     mediaRecorder = new MediaRecorder(stream);
     mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (AudioCtx) {
+      audioCtx = new AudioCtx();
+      if (audioCtx.state === 'suspended') {
+        try { await audioCtx.resume(); } catch { /* ignore */ }
+      }
+      source   = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser();
+      // Small FFT — we only need time-domain RMS, not frequency bins.
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.3;
+      source.connect(analyser);
+      sampleBuf = new Uint8Array(analyser.fftSize);
+    }
   } catch (err) {
+    if (stream) stream.getTracks().forEach(t => { try { t.stop(); } catch { /* ignore */ } });
+    if (audioCtx) { try { audioCtx.close(); } catch { /* ignore */ } }
     throw new Error(`Microphone access denied: ${err.message}`);
   }
 
+  function sampleLevel() {
+    if (!analyser || !sampleBuf) return;
+    analyser.getByteTimeDomainData(sampleBuf);
+    let sum = 0;
+    for (let i = 0; i < sampleBuf.length; i++) {
+      const v = (sampleBuf[i] - 128) / 128;
+      sum += v * v;
+    }
+    const rms = Math.sqrt(sum / sampleBuf.length);
+    if (rms > maxRms) maxRms = rms;
+    const now = performance.now();
+    if (lastSampleAt && rms > SILENCE_RMS_THRESHOLD) {
+      speechMs += now - lastSampleAt;
+    }
+    lastSampleAt = now;
+  }
+
+  function stopMonitoring() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    lastSampleAt = 0;
+  }
+
+  function releaseAll() {
+    stopMonitoring();
+    // Explicitly disconnect the source graph before closing the context — this
+    // releases the MediaStreamSourceNode's reference to the stopped stream
+    // without waiting on GC.
+    if (source) { try { source.disconnect(); } catch { /* ignore */ } }
+    if (stream) stream.getTracks().forEach(t => { try { t.stop(); } catch { /* ignore */ } });
+    if (audioCtx) { try { audioCtx.close(); } catch { /* ignore */ } }
+    audioCtx = null;
+    analyser = null;
+    source = null;
+    stream = null;
+    sampleBuf = null;
+  }
+
   return {
-    start() { try { mediaRecorder.start(); } catch { /* ignore */ } },
+    start() {
+      try { mediaRecorder.start(); } catch { /* ignore */ }
+      // Poll the analyser at 20Hz — fine-grained enough for RMS silence
+      // detection, cheap, and keeps working when the tab loses focus
+      // (requestAnimationFrame pauses in background tabs).
+      if (analyser && pollTimer === null) {
+        lastSampleAt = performance.now();
+        pollTimer = setInterval(sampleLevel, 50);
+      }
+    },
     stop() {
       return new Promise(resolve => {
-        if (!mediaRecorder || mediaRecorder.state === 'inactive') { resolve(null); return; }
+        stopMonitoring();
+        if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+          releaseAll();
+          resolve(null);
+          return;
+        }
         mediaRecorder.onstop = () => {
           const blob = chunks.length
             ? new Blob(chunks, { type: mediaRecorder.mimeType })
             : null;
-          if (stream) stream.getTracks().forEach(t => t.stop());
+          releaseAll();
           resolve(blob);
         };
-        try { mediaRecorder.stop(); } catch { resolve(null); }
+        try { mediaRecorder.stop(); } catch {
+          releaseAll();
+          resolve(null);
+        }
       });
     },
-    releaseStream() {
-      if (stream) stream.getTracks().forEach(t => t.stop());
+    releaseStream() { releaseAll(); },
+    /** Peak RMS observed while recording (0..1). */
+    getMaxLevel() { return maxRms; },
+    /** Accumulated milliseconds with level above the silence threshold. */
+    getSpeechMs() { return speechMs; },
+    /** True if the recording contained no meaningful sound. */
+    isSilent() {
+      return maxRms < SILENCE_RMS_THRESHOLD || speechMs < MIN_SPEECH_DURATION_MS;
     },
   };
+}
+
+/**
+ * Shared error codes used between engines and the UI to classify assessment
+ * failures. These MUST match the strings the UI checks in app.js.
+ */
+export const ASSESSMENT_ERROR = {
+  SILENT_AUDIO: 'SilentAudio',
+  NO_MATCH:     'NoMatch',
+  NO_MIC:       'NoMic',
+  TIMEOUT:      'Timeout',
+  ABORTED:      'Aborted',
+  NETWORK:      'Network',
+  UNKNOWN:      'Unknown',
+};
+
+/**
+ * Build the shared `{ raw: { error } }` tag for a zero-score result based on
+ * the recorder's silence telemetry.
+ */
+function tagFailureFromRecorder(result, recorder, recognizedText = '') {
+  if (result.pronScore > 0) return;
+  const code = recorder.isSilent()
+    ? ASSESSMENT_ERROR.SILENT_AUDIO
+    : recognizedText
+      ? (result.raw?.error || ASSESSMENT_ERROR.NO_MATCH)
+      : ASSESSMENT_ERROR.NO_MATCH;
+  result.raw = { ...(result.raw || {}), error: code };
+}
+
+/** Throw an assessment error with a structured code field. */
+function makeAssessmentError(code, message) {
+  const err = new Error(message);
+  err.code = code;
+  return err;
 }
 
 // ===========================================================================
@@ -300,9 +469,16 @@ export class AzureAssessmentEngine {
       this.settings.azureRegion
     );
     config.speechRecognitionLanguage = locale;
+    // Give users more breathing room: longer tail silence before cutting off,
+    // and longer initial silence before giving up (default is 5s which is harsh
+    // when the user needs a moment to prepare).
     config.setProperty(
       SpeechSDK.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs,
-      '1500'
+      '2500'
+    );
+    config.setProperty(
+      SpeechSDK.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs,
+      '8000'
     );
     return config;
   }
@@ -327,7 +503,8 @@ export class AzureAssessmentEngine {
   /**
    * Assess a single utterance against a reference text.
    * @param {string} referenceText
-   * @param {(status: string) => void} onStatus - Called with status keys
+   * @param {(status: string) => void} onStatus - Called with status keys:
+   *   'connecting' | 'countdown-3' | 'countdown-2' | 'countdown-1' | 'recording'
    * @returns {Promise<AssessmentResult>}
    */
   async assess(referenceText, onStatus = () => {}) {
@@ -337,18 +514,30 @@ export class AzureAssessmentEngine {
       throw new Error('Azure API key required');
     }
 
-    // 1. Start parallel MediaRecorder for playback
+    onStatus('connecting');
+
+    // Open the mic early so it's fully initialised by the time the countdown
+    // ends — Azure's fromDefaultMicrophoneInput() will open its own handle
+    // but hardware warm-up happens on the first getUserMedia() call.
     const recorder = await startParallelRecorder();
 
-    // 2. Build Azure recognizer with pronunciation assessment
-    const speechConfig = this._buildSpeechConfig();
-    const pronConfig = this._buildPronConfig(referenceText);
-    const audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
-    const recognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);
-    pronConfig.applyTo(recognizer);
+    let recognizer;
+    try {
+      recorder.start();
+      await runCountdown(onStatus);
+
+      const speechConfig = this._buildSpeechConfig();
+      const pronConfig = this._buildPronConfig(referenceText);
+      const audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
+      recognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);
+      pronConfig.applyTo(recognizer);
+    } catch (err) {
+      try { recorder.releaseStream(); } catch { /* ignore */ }
+      throw err;
+    }
 
     return new Promise((resolve, reject) => {
-      const TIMEOUT_MS = 20000;
+      const TIMEOUT_MS = 30000;
       let timeoutId = null;
       let settled = false;
 
@@ -360,22 +549,19 @@ export class AzureAssessmentEngine {
         const recordingBlob = await recorder.stop();
         if (error) { reject(error); return; }
         const parsed = parseAzureResult(result, SpeechSDK);
+        tagFailureFromRecorder(parsed, recorder, parsed.recognizedText);
         resolve({ ...parsed, recordingBlob });
       };
 
       recognizer.sessionStarted = () => onStatus('recording');
 
       timeoutId = setTimeout(() => {
-        finish(null, new Error('Assessment timed out after 20s'));
+        finish(null, makeAssessmentError(ASSESSMENT_ERROR.TIMEOUT, 'Assessment timed out after 30s'));
       }, TIMEOUT_MS);
-
-      // Start parallel recording alongside Azure SDK mic capture
-      recorder.start();
-      onStatus('connecting');
 
       recognizer.recognizeOnceAsync(
         result => finish(result, null),
-        err  => finish(null, new Error(`Azure recognition failed: ${err}`))
+        err  => finish(null, makeAssessmentError(ASSESSMENT_ERROR.UNKNOWN, `Azure recognition failed: ${err}`))
       );
     });
   }
@@ -412,7 +598,8 @@ export class WebSpeechAssessmentEngine {
    * Assess a single utterance using the Web Speech API.
    * Returns a normalised result with word-level diff (no phoneme detail).
    * @param {string} referenceText
-   * @param {(status: string) => void} onStatus
+   * @param {(status: string) => void} onStatus - Emits:
+   *   'connecting' | 'countdown-3' | 'countdown-2' | 'countdown-1' | 'recording'
    * @returns {Promise<AssessmentResult>}
    */
   async assess(referenceText, onStatus = () => {}) {
@@ -421,33 +608,47 @@ export class WebSpeechAssessmentEngine {
       throw new Error('Web Speech API not supported in this browser. Use Chrome, Edge or Safari.');
     }
 
+    onStatus('connecting');
+
     const recorder = await startParallelRecorder();
 
-    const recognition = new SpeechRecognition();
-    const locale = this.settings.accentTarget === 'uk' ? 'en-GB' : 'en-US';
-    recognition.lang = locale;
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-    this._recognition = recognition;
+    let recognition;
+    try {
+      recorder.start();
+      await runCountdown(onStatus);
+
+      recognition = new SpeechRecognition();
+      const locale = this.settings.accentTarget === 'uk' ? 'en-GB' : 'en-US';
+      recognition.lang = locale;
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+      this._recognition = recognition;
+    } catch (err) {
+      try { recorder.releaseStream(); } catch { /* ignore */ }
+      throw err;
+    }
 
     return new Promise((resolve, reject) => {
       let settled = false;
+      let endTimer = null;
 
       const finish = async (recognizedText, confidence, error) => {
         if (settled) return;
         settled = true;
         this._recognition = null;
+        if (endTimer) clearTimeout(endTimer);
         const recordingBlob = await recorder.stop();
-        if (error) { reject(error); return; }
+        if (error) {
+          reject(error);
+          return;
+        }
         const result = computeWebSpeechResult(referenceText, recognizedText, confidence);
+        tagFailureFromRecorder(result, recorder, recognizedText);
         resolve({ ...result, recordingBlob });
       };
 
-      recognition.onstart = () => {
-        recorder.start();
-        onStatus('recording');
-      };
+      recognition.onstart = () => { onStatus('recording'); };
 
       recognition.onresult = event => {
         const r = event.results[0][0];
@@ -456,19 +657,36 @@ export class WebSpeechAssessmentEngine {
 
       recognition.onerror = event => {
         if (event.error === 'no-speech') {
-          finish('', 0, new Error('No speech detected'));
+          finish('', 0, null);
+        } else if (event.error === 'aborted') {
+          finish('', 0, null);
+        } else if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          finish('', 0, makeAssessmentError(ASSESSMENT_ERROR.NO_MIC, `Speech recognition error: ${event.error}`));
+        } else if (event.error === 'network') {
+          finish('', 0, makeAssessmentError(ASSESSMENT_ERROR.NETWORK, `Speech recognition error: ${event.error}`));
         } else {
-          finish(null, null, new Error(`Speech recognition error: ${event.error}`));
+          finish('', 0, makeAssessmentError(ASSESSMENT_ERROR.UNKNOWN, `Speech recognition error: ${event.error}`));
         }
       };
 
       recognition.onend = () => {
-        // If neither onresult nor onerror fired (e.g. browser ended early), reject.
-        if (!settled) finish('', 0, new Error('Recognition ended without result'));
+        // If neither onresult nor onerror fired (e.g. browser ended early),
+        // fall through to a soft failure — the level monitor will decide
+        // whether to tag it SilentAudio or NoMatch.
+        if (!settled) finish('', 0, null);
       };
 
-      onStatus('connecting');
-      recognition.start();
+      // Safety net: Web Speech has no native timeout, so force one if the
+      // browser never emits onstart/onend/onerror.
+      endTimer = setTimeout(() => {
+        if (!settled) finish('', 0, makeAssessmentError(ASSESSMENT_ERROR.TIMEOUT, 'Recognition timed out'));
+      }, 20000);
+
+      try {
+        recognition.start();
+      } catch (e) {
+        finish('', 0, makeAssessmentError(ASSESSMENT_ERROR.UNKNOWN, `Failed to start recognition: ${e.message}`));
+      }
     });
   }
 

@@ -1096,6 +1096,19 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .p-status--error { color: var(--color-error); }
 .p-status--warn  { color: var(--color-warning); }
+.p-status--countdown {
+  font-size: var(--text-4xl);
+  font-weight: 800;
+  color: var(--color-primary);
+  min-height: 2.5rem;
+  line-height: 1;
+  animation: countdownPulse 0.6s ease;
+}
+@keyframes countdownPulse {
+  0%   { transform: scale(0.75); opacity: 0; }
+  40%  { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
 
 /* Results panel */
 .p-results {
