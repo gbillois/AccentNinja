@@ -981,7 +981,12 @@ export function playNinjaAnimation(container, result, options = {}) {
       { label: '🔊', title: 'Listen',  handler: onListen,     always: false },
       { label: '🐢', title: 'Slow',    handler: onListenSlow, always: false },
       { label: '🎧', title: 'Mine',    handler: recordingBlob
-        ? () => { const a = new Audio(URL.createObjectURL(recordingBlob)); a.play(); }
+        ? () => {
+            const url = URL.createObjectURL(recordingBlob);
+            const a = new Audio(url);
+            a.onended = a.onerror = () => URL.revokeObjectURL(url);
+            a.play();
+          }
         : null,   always: false },
       { label: '↺',  title: 'Retry',   handler: onRetry,      always: true,  isRetry: true },
       { label: '→',  title: 'Next',    handler: onNext,       always: false },

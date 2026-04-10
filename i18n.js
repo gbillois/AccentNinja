@@ -108,6 +108,9 @@ const STRINGS = {
     'engine.processing': 'Analyse en cours...',
     'engine.done': 'Analyse terminée',
     'engine.stopping': 'Arrêt en cours...',
+    'engine.retrying': 'Nouvelle tentative…',
+    'engine.tapToCancel': 'Touchez pour annuler',
+    'engine.switchedTemp': 'Moteur navigateur activé (temporairement)',
 
     'error.noMic': 'Microphone non disponible. Vérifiez les permissions du navigateur.',
     'error.noApiKey': 'Clé API Azure requise pour ce moteur.',
@@ -121,7 +124,19 @@ const STRINGS = {
     'error.recordFailed': 'Enregistrement non valide. Réessayez.',
     'error.emptyPhrase': 'Tapez une phrase avant d\'enregistrer.',
     'error.browserNotSupported': 'Navigateur non supporté. Utilisez Chrome, Edge ou Safari récent.',
+    'error.parseError': 'Votre voix a été reconnue, mais les données de notation étaient absentes. Réessayez.',
+    'error.azureAuth': 'Échec d\'authentification Azure. Vérifiez votre clé API dans les paramètres.',
+    'error.cancelled': 'Enregistrement annulé.',
+    'error.tryBrowserEngine': 'Azure est injoignable. Essayer avec le moteur navigateur ?',
     'error.unknown': 'Erreur inconnue. Réessayez.',
+
+    'action.switchEngine': 'Basculer',
+    'action.copy': 'Copier',
+
+    'settings.debug.title': 'Debug / Échecs récents',
+    'settings.debug.empty': 'Aucun échec enregistré.',
+    'settings.debug.clear': 'Effacer',
+    'settings.debug.copied': 'Journal copié dans le presse-papiers',
 
     'badge.azure': 'Azure',
     'badge.web': 'Web',
@@ -260,6 +275,9 @@ const STRINGS = {
     'engine.processing': 'Processing...',
     'engine.done': 'Assessment complete',
     'engine.stopping': 'Stopping...',
+    'engine.retrying': 'Retrying…',
+    'engine.tapToCancel': 'Tap to cancel',
+    'engine.switchedTemp': 'Switched to browser engine (temporary)',
 
     'error.noMic': 'Microphone unavailable. Check browser permissions.',
     'error.noApiKey': 'Azure API key required for this engine.',
@@ -273,7 +291,19 @@ const STRINGS = {
     'error.recordFailed': 'Recording was not valid. Try again.',
     'error.emptyPhrase': 'Type a phrase before recording.',
     'error.browserNotSupported': 'Browser not supported. Use a recent Chrome, Edge or Safari.',
+    'error.parseError': 'Your speech was recognised, but scoring data was missing. Please retry.',
+    'error.azureAuth': 'Azure authentication failed. Check your API key in settings.',
+    'error.cancelled': 'Recording cancelled.',
+    'error.tryBrowserEngine': 'Azure is unreachable. Try with the browser engine?',
     'error.unknown': 'Unknown error. Please try again.',
+
+    'action.switchEngine': 'Switch',
+    'action.copy': 'Copy',
+
+    'settings.debug.title': 'Debug / Recent failures',
+    'settings.debug.empty': 'No recent failures logged.',
+    'settings.debug.clear': 'Clear',
+    'settings.debug.copied': 'Log copied to clipboard',
 
     'badge.azure': 'Azure',
     'badge.web': 'Web',

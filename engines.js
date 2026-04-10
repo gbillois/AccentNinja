@@ -105,14 +105,23 @@ async function startParallelRecorder() {
   const chunks = [];
 
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl:  true,
-        channelCount:     1,
-      },
-    });
+    // Race getUserMedia against a 10s timeout so a dismissed/hidden permission
+    // prompt surfaces as a clean NoMic error instead of an indefinite hang.
+    const GUM_TIMEOUT_MS = 10000;
+    stream = await Promise.race([
+      navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl:  true,
+          channelCount:     1,
+        },
+      }),
+      new Promise((_, reject) => setTimeout(
+        () => reject(new Error('Microphone permission prompt timed out')),
+        GUM_TIMEOUT_MS
+      )),
+    ]);
 
     // Some devices grant permission but hand back a dead/muted track when
     // a different input is physically selected — fail fast so the user sees
@@ -125,8 +134,16 @@ async function startParallelRecorder() {
       console.warn('[AccentNinja] Microphone track reports muted=true');
     }
 
-    mediaRecorder = new MediaRecorder(stream);
-    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+    // MediaRecorder may throw on exotic browser/codec combos. Keep it null
+    // in that case — the analyser + Azure stream still work, we just lose
+    // the replay blob.
+    try {
+      mediaRecorder = new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+    } catch (e) {
+      console.warn('[AccentNinja] MediaRecorder unavailable — replay blob disabled:', e);
+      mediaRecorder = null;
+    }
 
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (AudioCtx) {
@@ -187,7 +204,9 @@ async function startParallelRecorder() {
 
   return {
     start() {
-      try { mediaRecorder.start(); } catch { /* ignore */ }
+      if (mediaRecorder) {
+        try { mediaRecorder.start(); } catch { /* ignore */ }
+      }
       // Poll the analyser at 20Hz — fine-grained enough for RMS silence
       // detection, cheap, and keeps working when the tab loses focus
       // (requestAnimationFrame pauses in background tabs).
@@ -199,7 +218,12 @@ async function startParallelRecorder() {
     stop() {
       return new Promise(resolve => {
         stopMonitoring();
-        if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+        if (!mediaRecorder) {
+          releaseAll();
+          resolve(null);
+          return;
+        }
+        if (mediaRecorder.state === 'inactive') {
           releaseAll();
           resolve(null);
           return;
@@ -218,6 +242,19 @@ async function startParallelRecorder() {
       });
     },
     releaseStream() { releaseAll(); },
+    /** Expose the underlying MediaStream so Azure can reuse it (fromStreamInput). */
+    getMediaStream() { return stream; },
+    /** Current instantaneous RMS (0..1), resampled on each call. */
+    getCurrentLevel() {
+      if (!analyser || !sampleBuf) return 0;
+      analyser.getByteTimeDomainData(sampleBuf);
+      let sum = 0;
+      for (let i = 0; i < sampleBuf.length; i++) {
+        const v = (sampleBuf[i] - 128) / 128;
+        sum += v * v;
+      }
+      return Math.sqrt(sum / sampleBuf.length);
+    },
     /** Peak RMS observed while recording (0..1). */
     getMaxLevel() { return maxRms; },
     /** Accumulated milliseconds with level above the silence threshold. */
@@ -234,26 +271,33 @@ async function startParallelRecorder() {
  * failures. These MUST match the strings the UI checks in app.js.
  */
 export const ASSESSMENT_ERROR = {
-  SILENT_AUDIO: 'SilentAudio',
-  NO_MATCH:     'NoMatch',
-  NO_MIC:       'NoMic',
-  TIMEOUT:      'Timeout',
-  ABORTED:      'Aborted',
-  NETWORK:      'Network',
-  UNKNOWN:      'Unknown',
+  SILENT_AUDIO:    'SilentAudio',
+  NO_MATCH:        'NoMatch',
+  NO_MIC:          'NoMic',
+  TIMEOUT:         'Timeout',
+  ABORTED:         'Aborted',
+  CANCELLED:       'Cancelled',
+  NETWORK:         'Network',
+  AUTH:            'Auth',
+  PARSE_ERROR:     'ParseError',
+  EMPTY_REFERENCE: 'EmptyReference',
+  UNKNOWN:         'Unknown',
 };
 
 /**
  * Build the shared `{ raw: { error } }` tag for a zero-score result based on
  * the recorder's silence telemetry.
+ *
+ * Early-returns if the result already carries a specific error code (e.g.
+ * ParseError from parseAzureResult) — otherwise that code would be clobbered
+ * by a generic NoMatch and the UI would show the wrong message.
  */
 function tagFailureFromRecorder(result, recorder, recognizedText = '') {
   if (result.pronScore > 0) return;
+  if (result.raw?.error) return; // preserve upstream-tagged failure
   const code = recorder.isSilent()
     ? ASSESSMENT_ERROR.SILENT_AUDIO
-    : recognizedText
-      ? (result.raw?.error || ASSESSMENT_ERROR.NO_MATCH)
-      : ASSESSMENT_ERROR.NO_MATCH;
+    : ASSESSMENT_ERROR.NO_MATCH;
   result.raw = { ...(result.raw || {}), error: code };
 }
 
@@ -503,36 +547,67 @@ export class AzureAssessmentEngine {
   /**
    * Assess a single utterance against a reference text.
    * @param {string} referenceText
-   * @param {(status: string) => void} onStatus - Called with status keys:
+   * @param {(status: string|object) => void} onStatus - Called with status keys:
    *   'connecting' | 'countdown-3' | 'countdown-2' | 'countdown-1' | 'recording'
+   *   or status objects: { type: 'level', rms }
+   * @param {object} [opts]
+   * @param {AbortSignal} [opts.signal] - Abort the in-flight assessment.
+   * @param {object} [opts.recorder] - Optional pre-started recorder (for
+   *   controller-managed lifecycle); if omitted, one is created and stopped
+   *   internally.
    * @returns {Promise<AssessmentResult>}
    */
-  async assess(referenceText, onStatus = () => {}) {
+  async assess(referenceText, onStatus = () => {}, opts = {}) {
     const SpeechSDK = getSpeechSDK();
 
     if (!this.settings.azureApiKey) {
-      throw new Error('Azure API key required');
+      throw makeAssessmentError(ASSESSMENT_ERROR.AUTH, 'Azure API key required');
+    }
+    if (opts.signal?.aborted) {
+      throw makeAssessmentError(ASSESSMENT_ERROR.ABORTED, 'aborted before start');
     }
 
     onStatus('connecting');
 
     // Open the mic early so it's fully initialised by the time the countdown
-    // ends — Azure's fromDefaultMicrophoneInput() will open its own handle
-    // but hardware warm-up happens on the first getUserMedia() call.
-    const recorder = await startParallelRecorder();
+    // ends. Prefer a controller-managed recorder so its lifetime is fully
+    // owned outside this function (single-owner cleanup on abort).
+    const ownsRecorder = !opts.recorder;
+    const recorder = opts.recorder ?? await startParallelRecorder();
+    this._activeRecognizer = null;
 
     let recognizer;
     try {
-      recorder.start();
+      if (ownsRecorder) recorder.start();
       await runCountdown(onStatus);
+      if (opts.signal?.aborted) throw makeAssessmentError(ASSESSMENT_ERROR.ABORTED, 'aborted during countdown');
 
       const speechConfig = this._buildSpeechConfig();
       const pronConfig = this._buildPronConfig(referenceText);
-      const audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
+
+      // Prefer reusing the single getUserMedia stream (avoids Android
+      // dual-handle contention); fall back to the default mic on browsers
+      // where fromStreamInput refuses the MediaStream adapter.
+      let audioConfig;
+      try {
+        const stream = recorder.getMediaStream?.();
+        if (stream && SpeechSDK.AudioConfig.fromStreamInput) {
+          audioConfig = SpeechSDK.AudioConfig.fromStreamInput(stream);
+        } else {
+          audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
+        }
+      } catch (streamErr) {
+        console.warn('[AccentNinja] fromStreamInput failed, falling back:', streamErr);
+        audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
+      }
+
       recognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);
       pronConfig.applyTo(recognizer);
+      this._activeRecognizer = recognizer;
     } catch (err) {
-      try { recorder.releaseStream(); } catch { /* ignore */ }
+      if (ownsRecorder) {
+        try { recorder.releaseStream(); } catch { /* ignore */ }
+      }
       throw err;
     }
 
@@ -540,18 +615,30 @@ export class AzureAssessmentEngine {
       const TIMEOUT_MS = 30000;
       let timeoutId = null;
       let settled = false;
+      let abortListener = null;
 
       const finish = async (result, error) => {
         if (settled) return;
         settled = true;
         if (timeoutId) clearTimeout(timeoutId);
+        if (abortListener && opts.signal) {
+          opts.signal.removeEventListener('abort', abortListener);
+        }
         try { recognizer.close(); } catch { /* ignore */ }
-        const recordingBlob = await recorder.stop();
+        this._activeRecognizer = null;
+        const recordingBlob = ownsRecorder ? await recorder.stop() : null;
         if (error) { reject(error); return; }
         const parsed = parseAzureResult(result, SpeechSDK);
         tagFailureFromRecorder(parsed, recorder, parsed.recognizedText);
         resolve({ ...parsed, recordingBlob });
       };
+
+      if (opts.signal) {
+        abortListener = () => {
+          finish(null, makeAssessmentError(ASSESSMENT_ERROR.ABORTED, 'aborted'));
+        };
+        opts.signal.addEventListener('abort', abortListener, { once: true });
+      }
 
       recognizer.sessionStarted = () => onStatus('recording');
 
@@ -561,9 +648,23 @@ export class AzureAssessmentEngine {
 
       recognizer.recognizeOnceAsync(
         result => finish(result, null),
-        err  => finish(null, makeAssessmentError(ASSESSMENT_ERROR.UNKNOWN, `Azure recognition failed: ${err}`))
+        err  => {
+          const msg  = String(err ?? '');
+          const code = bucketAzureError(msg);
+          finish(null, makeAssessmentError(code, `Azure recognition failed: ${msg}`));
+        }
       );
     });
+  }
+
+  /**
+   * Abort an in-flight assessment. Called by controller cancel().
+   */
+  stop() {
+    if (this._activeRecognizer) {
+      try { this._activeRecognizer.close(); } catch { /* ignore */ }
+      this._activeRecognizer = null;
+    }
   }
 
   /**
@@ -598,24 +699,31 @@ export class WebSpeechAssessmentEngine {
    * Assess a single utterance using the Web Speech API.
    * Returns a normalised result with word-level diff (no phoneme detail).
    * @param {string} referenceText
-   * @param {(status: string) => void} onStatus - Emits:
-   *   'connecting' | 'countdown-3' | 'countdown-2' | 'countdown-1' | 'recording'
+   * @param {(status: string|object) => void} onStatus
+   * @param {object} [opts]
+   * @param {AbortSignal} [opts.signal]
+   * @param {object} [opts.recorder]
    * @returns {Promise<AssessmentResult>}
    */
-  async assess(referenceText, onStatus = () => {}) {
+  async assess(referenceText, onStatus = () => {}, opts = {}) {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       throw new Error('Web Speech API not supported in this browser. Use Chrome, Edge or Safari.');
     }
+    if (opts.signal?.aborted) {
+      throw makeAssessmentError(ASSESSMENT_ERROR.ABORTED, 'aborted before start');
+    }
 
     onStatus('connecting');
 
-    const recorder = await startParallelRecorder();
+    const ownsRecorder = !opts.recorder;
+    const recorder = opts.recorder ?? await startParallelRecorder();
 
     let recognition;
     try {
-      recorder.start();
+      if (ownsRecorder) recorder.start();
       await runCountdown(onStatus);
+      if (opts.signal?.aborted) throw makeAssessmentError(ASSESSMENT_ERROR.ABORTED, 'aborted during countdown');
 
       recognition = new SpeechRecognition();
       const locale = this.settings.accentTarget === 'uk' ? 'en-GB' : 'en-US';
@@ -625,20 +733,26 @@ export class WebSpeechAssessmentEngine {
       recognition.maxAlternatives = 1;
       this._recognition = recognition;
     } catch (err) {
-      try { recorder.releaseStream(); } catch { /* ignore */ }
+      if (ownsRecorder) {
+        try { recorder.releaseStream(); } catch { /* ignore */ }
+      }
       throw err;
     }
 
     return new Promise((resolve, reject) => {
       let settled = false;
       let endTimer = null;
+      let abortListener = null;
 
       const finish = async (recognizedText, confidence, error) => {
         if (settled) return;
         settled = true;
         this._recognition = null;
         if (endTimer) clearTimeout(endTimer);
-        const recordingBlob = await recorder.stop();
+        if (abortListener && opts.signal) {
+          opts.signal.removeEventListener('abort', abortListener);
+        }
+        const recordingBlob = ownsRecorder ? await recorder.stop() : null;
         if (error) {
           reject(error);
           return;
@@ -647,6 +761,14 @@ export class WebSpeechAssessmentEngine {
         tagFailureFromRecorder(result, recorder, recognizedText);
         resolve({ ...result, recordingBlob });
       };
+
+      if (opts.signal) {
+        abortListener = () => {
+          try { recognition.abort(); } catch { /* ignore */ }
+          finish('', 0, makeAssessmentError(ASSESSMENT_ERROR.ABORTED, 'aborted'));
+        };
+        opts.signal.addEventListener('abort', abortListener, { once: true });
+      }
 
       recognition.onstart = () => { onStatus('recording'); };
 
@@ -659,7 +781,8 @@ export class WebSpeechAssessmentEngine {
         if (event.error === 'no-speech') {
           finish('', 0, null);
         } else if (event.error === 'aborted') {
-          finish('', 0, null);
+          // If we aborted via AbortSignal, finish() above already reported it.
+          if (!settled) finish('', 0, null);
         } else if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
           finish('', 0, makeAssessmentError(ASSESSMENT_ERROR.NO_MIC, `Speech recognition error: ${event.error}`));
         } else if (event.error === 'network') {
@@ -692,7 +815,7 @@ export class WebSpeechAssessmentEngine {
 
   stop() {
     if (this._recognition) {
-      try { this._recognition.stop(); } catch { /* ignore */ }
+      try { this._recognition.abort(); } catch { /* ignore */ }
       this._recognition = null;
     }
   }
@@ -702,6 +825,19 @@ export class WebSpeechAssessmentEngine {
 // Azure result parser
 // ===========================================================================
 
+/**
+ * Map an Azure SDK cancellation / error string to one of our shared
+ * ASSESSMENT_ERROR codes, so the UI can render a useful message.
+ */
+function bucketAzureError(message = '') {
+  const s = String(message);
+  if (/401|unauthor|forbidden|403/i.test(s))            return ASSESSMENT_ERROR.AUTH;
+  if (/429|throttl|rate.?limit|quota/i.test(s))         return ASSESSMENT_ERROR.NETWORK;
+  if (/1006|websocket|network|timeout|dns|offline/i.test(s)) return ASSESSMENT_ERROR.NETWORK;
+  if (/abort|cancell?ed/i.test(s))                      return ASSESSMENT_ERROR.ABORTED;
+  return ASSESSMENT_ERROR.UNKNOWN;
+}
+
 function parseAzureResult(result, SpeechSDK) {
   if (result.reason === SpeechSDK.ResultReason.NoMatch) {
     return {
@@ -709,7 +845,23 @@ function parseAzureResult(result, SpeechSDK) {
       pronScore: 0, accuracyScore: 0, fluencyScore: 0, completenessScore: 0, prosodyScore: null,
       recognizedText: '',
       words: [],
-      raw: { error: 'NoMatch' },
+      raw: { error: ASSESSMENT_ERROR.NO_MATCH },
+    };
+  }
+
+  if (result.reason === SpeechSDK.ResultReason.Canceled) {
+    // Try to extract structured cancellation details
+    let details = '';
+    try {
+      const cd = SpeechSDK.CancellationDetails.fromResult(result);
+      details = `${cd.reason || ''} ${cd.errorDetails || ''}`.trim();
+    } catch { /* ignore */ }
+    return {
+      engine: 'azure',
+      pronScore: 0, accuracyScore: 0, fluencyScore: 0, completenessScore: 0, prosodyScore: null,
+      recognizedText: '',
+      words: [],
+      raw: { error: bucketAzureError(details), _debug: details || `Reason: ${result.reason}` },
     };
   }
 
@@ -719,7 +871,7 @@ function parseAzureResult(result, SpeechSDK) {
       pronScore: 0, accuracyScore: 0, fluencyScore: 0, completenessScore: 0, prosodyScore: null,
       recognizedText: '',
       words: [],
-      raw: { error: `Reason: ${result.reason}` },
+      raw: { error: ASSESSMENT_ERROR.UNKNOWN, _debug: `Reason: ${result.reason}` },
     };
   }
 
@@ -731,12 +883,16 @@ function parseAzureResult(result, SpeechSDK) {
   let pron = null;
   let words = [];
   let raw = {};
+  let parseErrorReason = null;
 
   try {
     raw = JSON.parse(jsonStr);
     const nbest = raw?.NBest?.[0];
-    if (nbest) {
+    if (!nbest) {
+      parseErrorReason = 'NBest missing';
+    } else {
       pron = nbest.PronunciationAssessment;
+      if (!pron) parseErrorReason = 'PronunciationAssessment missing on NBest[0]';
       words = (nbest.Words ?? []).map(w => ({
         word: w.Word,
         accuracyScore: w.PronunciationAssessment?.AccuracyScore ?? 0,
@@ -749,6 +905,19 @@ function parseAzureResult(result, SpeechSDK) {
     }
   } catch (e) {
     console.warn('[AccentNinja] Failed to parse Azure JSON result:', e);
+    parseErrorReason = `JSON parse failed: ${e.message}`;
+  }
+
+  // If we recognized text but the scoring block is absent, surface a distinct
+  // ParseError rather than silently showing pronScore=0 → NoMatch.
+  if (recognizedText && !pron) {
+    return {
+      engine: 'azure',
+      pronScore: 0, accuracyScore: 0, fluencyScore: 0, completenessScore: 0, prosodyScore: null,
+      recognizedText,
+      words,
+      raw: { ...raw, error: ASSESSMENT_ERROR.PARSE_ERROR, _debug: parseErrorReason },
+    };
   }
 
   return {
@@ -772,6 +941,18 @@ function computeWebSpeechResult(referenceText, recognizedText, confidence) {
   const refWords = normalizeWords(referenceText);
   const gotWords = normalizeWords(recognizedText ?? '');
   const conf = Math.max(0, Math.min(1, confidence ?? 0.5));
+
+  // Guard against empty reference — callers should validate first, but this
+  // stops NaN / phantom-score leakage if they don't.
+  if (refWords.length === 0) {
+    return {
+      engine: 'web',
+      pronScore: 0, accuracyScore: 0, fluencyScore: 0, completenessScore: 0, prosodyScore: null,
+      recognizedText: recognizedText ?? '',
+      words: [],
+      raw: { error: ASSESSMENT_ERROR.EMPTY_REFERENCE, confidence: conf, referenceText, recognizedText },
+    };
+  }
 
   const words = [];
 
@@ -833,6 +1014,179 @@ function computeWebSpeechResult(referenceText, recognizedText, confidence) {
     words,
     raw: { confidence: conf, referenceText, recognizedText },
   };
+}
+
+// ===========================================================================
+// Debug / failure ring buffer
+//
+// Lightweight in-memory log of recent assessment failures for diagnostics.
+// Not persisted; exposed via getDebugLog() for a settings-screen debug panel.
+// ===========================================================================
+
+const DEBUG_LOG_MAX = 20;
+const _debugLog = [];
+
+export function pushDebugLog(entry) {
+  _debugLog.push({ t: Date.now(), ...entry });
+  if (_debugLog.length > DEBUG_LOG_MAX) _debugLog.shift();
+}
+
+export function getDebugLog() {
+  return _debugLog.slice();
+}
+
+export function clearDebugLog() {
+  _debugLog.length = 0;
+}
+
+// ===========================================================================
+// AssessmentController
+//
+// Wraps an assessment engine with:
+//   - shared recorder lifecycle (single startParallelRecorder per run)
+//   - AbortSignal-based cancel()
+//   - live-level frames emitted via onStatus({type:'level', rms})
+//   - one silent auto-retry on transient Network errors
+//
+// Usage:
+//   const ctrl = new AssessmentController(state.engines.assessment);
+//   const result = await ctrl.run(text, onStatus);
+//   ctrl.cancel();  // at any time
+// ===========================================================================
+
+/** How often to emit live-level frames while recording (ms). */
+const LEVEL_POLL_INTERVAL_MS = 100;
+
+/** Backoff delay before a silent auto-retry on transient network errors (ms). */
+const NETWORK_RETRY_BACKOFF_MS = 800;
+
+/** Error codes that trigger a single silent auto-retry. */
+const RETRYABLE_CODES = new Set([ASSESSMENT_ERROR.NETWORK]);
+
+export class AssessmentController {
+  constructor(engine) {
+    this.engine = engine;
+    this._abort = null;
+    this._recorder = null;
+    this._levelTimer = null;
+    this._retriedOnce = false;
+    this._done = false;
+  }
+
+  async run(referenceText, onStatus = () => {}) {
+    if (this._done) throw new Error('AssessmentController already used');
+    this._abort = new AbortController();
+
+    // Kick off a single recorder that both the controller (for level frames)
+    // and the engine (for Azure fromStreamInput) share.
+    try {
+      this._recorder = await startParallelRecorder();
+    } catch (err) {
+      this._done = true;
+      pushDebugLog({
+        kind: 'fail',
+        phase: 'recorder',
+        code: ASSESSMENT_ERROR.NO_MIC,
+        message: err?.message || String(err),
+        engine: this.engine?.constructor?.name || 'unknown',
+      });
+      throw err;
+    }
+    this._recorder.start();
+
+    // Start emitting live-level frames. We intentionally do NOT wait for the
+    // engine to emit 'recording' — this keeps the UI meter responsive from
+    // the moment the mic opens.
+    this._startLevelPoll(onStatus);
+
+    // Intercept the 'recording' status so cancel-while-recording can work.
+    const wrappedStatus = (status) => {
+      onStatus(status);
+    };
+
+    try {
+      return await this._attempt(referenceText, wrappedStatus, onStatus);
+    } finally {
+      this._stopLevelPoll();
+      try { await this._recorder?.stop(); } catch { /* ignore */ }
+      this._recorder = null;
+      this._done = true;
+    }
+  }
+
+  async _attempt(referenceText, onStatus, rawOnStatus) {
+    try {
+      const result = await this.engine.assess(referenceText, onStatus, {
+        signal: this._abort.signal,
+        recorder: this._recorder,
+      });
+      if (result?.raw?.error) {
+        pushDebugLog({
+          kind: 'fail',
+          phase: 'result',
+          code: result.raw.error,
+          engine: result.engine,
+          reference: String(referenceText || '').slice(0, 60),
+          recognized: String(result.recognizedText || '').slice(0, 60),
+        });
+      }
+      return result;
+    } catch (err) {
+      const code = err?.code || ASSESSMENT_ERROR.UNKNOWN;
+      // Auto-retry once for transient network failures, unless the user aborted.
+      if (
+        RETRYABLE_CODES.has(code) &&
+        !this._retriedOnce &&
+        !this._abort.signal.aborted
+      ) {
+        this._retriedOnce = true;
+        pushDebugLog({
+          kind: 'retry',
+          code,
+          message: err?.message || String(err),
+          engine: this.engine?.constructor?.name || 'unknown',
+        });
+        rawOnStatus({ type: 'retrying' });
+        await sleep(NETWORK_RETRY_BACKOFF_MS);
+        return this._attempt(referenceText, onStatus, rawOnStatus);
+      }
+      pushDebugLog({
+        kind: 'fail',
+        phase: 'throw',
+        code,
+        message: err?.message || String(err),
+        engine: this.engine?.constructor?.name || 'unknown',
+        reference: String(referenceText || '').slice(0, 60),
+      });
+      throw err;
+    }
+  }
+
+  _startLevelPoll(onStatus) {
+    if (this._levelTimer) return;
+    this._levelTimer = setInterval(() => {
+      const rms = this._recorder?.getCurrentLevel?.() ?? 0;
+      try { onStatus({ type: 'level', rms }); } catch { /* ignore */ }
+    }, LEVEL_POLL_INTERVAL_MS);
+  }
+
+  _stopLevelPoll() {
+    if (this._levelTimer) {
+      clearInterval(this._levelTimer);
+      this._levelTimer = null;
+    }
+  }
+
+  cancel(reason = 'user') {
+    this._abort?.abort(reason);
+    // Aggressively stop the engine in case the SDK swallows the signal.
+    try { this.engine?.stop?.(); } catch { /* ignore */ }
+  }
+
+  /** Current instantaneous level (0..1) — for passive callers. */
+  getLevel() {
+    return this._recorder?.getCurrentLevel?.() ?? 0;
+  }
 }
 
 // ===========================================================================

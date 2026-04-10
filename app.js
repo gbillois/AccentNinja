@@ -3,7 +3,18 @@
  * Screens: splash → setup (first launch) or home → settings / practice / results
  */
 
-import { createTTSEngine, createAssessmentEngine, AZURE_VOICES, AZURE_REGIONS, webVoicePriority } from './engines.js';
+import {
+  createTTSEngine,
+  createAssessmentEngine,
+  AssessmentController,
+  WebSpeechAssessmentEngine,
+  ASSESSMENT_ERROR,
+  getDebugLog,
+  clearDebugLog,
+  AZURE_VOICES,
+  AZURE_REGIONS,
+  webVoicePriority,
+} from './engines.js';
 import { t, setLanguage } from './i18n.js';
 import { CORPUS, MULTIPLAYER_PHRASES } from './corpus.js';
 import { playNinjaAnimation } from './ninja.js';
@@ -38,7 +49,19 @@ const state = {
   screen:   'splash',
   db:       null,
   audioCtx: null,   // shared Web Audio context for Ninja Mode
+  activeController: null, // in-flight AssessmentController, if any
 };
+
+/**
+ * Cancel any in-flight recording and release the mic. Safe to call from
+ * navigation, visibility change, or beforeunload handlers.
+ */
+function cancelActiveAssessment(reason = 'navigate') {
+  if (state.activeController) {
+    try { state.activeController.cancel(reason); } catch { /* ignore */ }
+    state.activeController = null;
+  }
+}
 
 // Transient "pending" settings in the Settings UI (not yet saved to DB).
 let pendingSettings = {};
@@ -133,6 +156,7 @@ async function persistSettings(updates) {
 function reinitEngines() {
   state.engines.tts        = createTTSEngine(state.settings);
   state.engines.assessment = createAssessmentEngine(state.settings);
+  // Any in-session fallback override is cleared whenever settings change.
 }
 
 // ===========================================================================
@@ -140,6 +164,16 @@ function reinitEngines() {
 // ===========================================================================
 
 function navigate(screen) {
+  // Kill any in-flight recording before we tear down the screen — avoids
+  // leaked mic streams and stale promise resolutions writing to a detached
+  // screen.
+  cancelActiveAssessment('navigate');
+  state.engines.tts?.stop?.();
+  // Suspend the shared AudioContext; it's recreated on demand by results screens.
+  if (state.audioCtx && state.audioCtx.state === 'running') {
+    try { state.audioCtx.suspend(); } catch { /* ignore */ }
+  }
+
   document.querySelectorAll('.screen').forEach(el => el.classList.remove('active'));
   const el = document.getElementById(`screen-${screen}`);
   if (el) el.classList.add('active');
@@ -182,6 +216,38 @@ function showToast(message, type = 'info', duration = 3000) {
   setTimeout(() => {
     toast.classList.remove('toast--visible');
     setTimeout(() => toast.remove(), 300);
+  }, duration);
+}
+
+/**
+ * Show a toast with a single action button. Used for offering fallbacks
+ * (e.g. "Retry with browser engine") after a recording failure.
+ */
+function showActionToast(message, actionLabel, onAction, duration = 6000) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'toast toast--error toast--action';
+  const msgSpan = document.createElement('span');
+  msgSpan.className = 'toast-msg';
+  msgSpan.textContent = message;
+  toast.appendChild(msgSpan);
+  const btn = document.createElement('button');
+  btn.className = 'toast-action';
+  btn.type = 'button';
+  btn.textContent = actionLabel;
+  btn.addEventListener('click', () => {
+    try { onAction(); } catch (e) { console.warn(e); }
+    toast.classList.remove('toast--visible');
+    setTimeout(() => toast.remove(), 300);
+  });
+  toast.appendChild(btn);
+  container.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('toast--visible'));
+  setTimeout(() => {
+    if (toast.parentElement) {
+      toast.classList.remove('toast--visible');
+      setTimeout(() => toast.remove(), 300);
+    }
   }, duration);
 }
 
@@ -441,6 +507,11 @@ function renderPracticeScreen() {
           <span class="p-record-label" id="record-label">Appuyer pour enregistrer</span>
         </div>
 
+        <!-- Live mic level meter -->
+        <div class="p-level-track" aria-hidden="true">
+          <div class="p-level-bar" id="p-level-bar"></div>
+        </div>
+
         <!-- Status -->
         <div class="p-status" id="p-status" aria-live="polite"></div>
 
@@ -522,7 +593,12 @@ async function handleListen() {
 }
 
 async function handleRecord() {
-  if (practiceState.status === 'recording') return; // guard double-tap
+  // Tap-while-recording = cancel. Single button handles both actions.
+  if (practiceState.status === 'recording' && state.activeController) {
+    state.activeController.cancel('user');
+    return;
+  }
+  if (practiceState.status === 'recording') return;
 
   const phrase = document.getElementById('phrase-input')?.value?.trim();
   if (!phrase) {
@@ -539,9 +615,17 @@ async function handleRecord() {
 
   setRecordUI('recording');
   practiceState.status = 'recording';
+  setLevelBar('p-level-bar', 0);
+
+  const controller = new AssessmentController(state.engines.assessment);
+  state.activeController = controller;
 
   try {
-    const result = await state.engines.assessment.assess(phrase, status => {
+    const result = await controller.run(phrase, status => {
+      if (typeof status === 'object' && status?.type === 'level') {
+        setLevelBar('p-level-bar', status.rms);
+        return;
+      }
       applyAssessmentStatus(setStatus, status);
     });
 
@@ -550,6 +634,7 @@ async function handleRecord() {
       practiceState.result = null;
       practiceState.recordingBlob = null;
       setRecordUI('idle');
+      setLevelBar('p-level-bar', 0);
       setStatus(describeAssessmentFailure(result), 'error');
       return;
     }
@@ -559,32 +644,51 @@ async function handleRecord() {
     practiceState.recordingBlob = result.recordingBlob ?? null;
 
     setRecordUI('done');
+    setLevelBar('p-level-bar', 0);
     setStatus('');
     showResults(result);
   } catch (err) {
     practiceState.status = 'idle';
     setRecordUI('idle');
+    setLevelBar('p-level-bar', 0);
     setStatus(describeAssessmentError(err), 'error');
+    maybeOfferFallbackEngine(err);
+  } finally {
+    if (state.activeController === controller) state.activeController = null;
   }
 }
 
-/** True if the assessment produced a usable score. */
+/**
+ * True if the assessment produced a usable score.
+ *
+ * An explicit `raw.error` tag always wins — even if pronScore is non-zero —
+ * because parseAzureResult / Web Speech engines may report a low-but-present
+ * score alongside a failure code. Conversely, a legitimately low score (even
+ * zero) is still considered "valid" as long as no error was tagged; we trust
+ * tagFailureFromRecorder to have flagged the recorder-level silence cases.
+ */
 function isValidAssessment(result) {
   if (!result) return false;
+  if (result.raw?.error) return false;
   const score = Number(result.pronScore);
-  return Number.isFinite(score) && score > 0;
+  if (!Number.isFinite(score)) return false;
+  return score >= 0;
 }
 
 /** Map an error code (from the engine or a raw.error tag) to a user message. */
 function messageForErrorCode(code) {
   switch (code) {
-    case 'SilentAudio': return t('error.silentAudio');
-    case 'NoMatch':     return t('error.noMatch');
-    case 'NoMic':       return t('error.noMic');
-    case 'Timeout':     return t('error.timeout');
-    case 'Network':     return t('error.networkError');
-    case 'Aborted':     return t('error.recordFailed');
-    default:            return t('error.recordFailed');
+    case ASSESSMENT_ERROR.SILENT_AUDIO:    return t('error.silentAudio');
+    case ASSESSMENT_ERROR.NO_MATCH:        return t('error.noMatch');
+    case ASSESSMENT_ERROR.NO_MIC:          return t('error.noMic');
+    case ASSESSMENT_ERROR.TIMEOUT:         return t('error.timeout');
+    case ASSESSMENT_ERROR.NETWORK:         return t('error.networkError');
+    case ASSESSMENT_ERROR.AUTH:            return t('error.azureAuth');
+    case ASSESSMENT_ERROR.PARSE_ERROR:     return t('error.parseError');
+    case ASSESSMENT_ERROR.EMPTY_REFERENCE: return t('error.emptyPhrase');
+    case ASSESSMENT_ERROR.ABORTED:
+    case ASSESSMENT_ERROR.CANCELLED:       return t('error.cancelled');
+    default:                               return t('error.recordFailed');
   }
 }
 
@@ -604,9 +708,14 @@ function describeAssessmentError(err) {
 
 /**
  * Apply an engine status event to a status-setter callback.
- * Handles the shared 'connecting' / 'countdown-N' / 'recording' status keys.
+ * Handles the shared 'connecting' / 'countdown-N' / 'recording' status keys,
+ * plus the controller's 'retrying' object form.
  */
 function applyAssessmentStatus(setter, status) {
+  if (typeof status === 'object' && status) {
+    if (status.type === 'retrying') setter(t('engine.retrying'), 'warn');
+    return;
+  }
   switch (status) {
     case 'connecting':
       setter(t('engine.connecting'));
@@ -626,6 +735,52 @@ function applyAssessmentStatus(setter, status) {
     default:
       break;
   }
+}
+
+/**
+ * Update a live mic-level bar. Drives width and color class from an RMS value.
+ * Safe to call with `rms=0` to reset. Silently no-ops if the element is absent.
+ */
+function setLevelBar(id, rms) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const track = el.parentElement;
+  // Typical speech RMS tops out around 0.2; clamp to 0..1 with a x4 boost.
+  const norm = Math.max(0, Math.min(1, (rms ?? 0) * 4));
+  el.style.width = `${(norm * 100).toFixed(0)}%`;
+  el.classList.remove('p-level-bar--low', 'p-level-bar--mid', 'p-level-bar--hi');
+  if (rms > 0.05)       el.classList.add('p-level-bar--hi');
+  else if (rms > 0.02)  el.classList.add('p-level-bar--mid');
+  else                  el.classList.add('p-level-bar--low');
+  // Show the track only while we're receiving live levels (rms > 0);
+  // setLevelBar(id, 0) is used both before and after recording to hide it.
+  if (track) {
+    if ((rms ?? 0) > 0) track.classList.add('p-level-track--active');
+    else                track.classList.remove('p-level-track--active');
+  }
+}
+
+/**
+ * After an assessment failure, if the active engine is Azure and the error
+ * was a network failure (after the controller already auto-retried once),
+ * offer an in-session fallback to the browser engine via an action toast.
+ * Does NOT persist the change.
+ */
+function maybeOfferFallbackEngine(err) {
+  if (err?.code !== ASSESSMENT_ERROR.NETWORK) return;
+  if (state.settings.assessmentEngine !== 'azure') return;
+  // Skip if we're already running the fallback engine in-session.
+  if (state.engines.assessment instanceof WebSpeechAssessmentEngine) return;
+
+  showActionToast(
+    t('error.tryBrowserEngine'),
+    t('action.switchEngine'),
+    () => {
+      state.engines.assessment = new WebSpeechAssessmentEngine(state.settings);
+      showToast(t('engine.switchedTemp'), 'info');
+    },
+    6000
+  );
 }
 
 function setStatus(text, type = '') {
@@ -658,8 +813,9 @@ function setRecordUI(status) {
   ring?.classList.toggle('p-record-ring--active', status === 'recording');
 
   if (status === 'recording') {
-    label.textContent = 'Enregistrement…';
-    btn.disabled = true;
+    // Keep the record button enabled so the user can tap to cancel.
+    label.textContent = t('engine.tapToCancel');
+    btn.disabled = false;
     listenBtn.disabled = true;
   } else if (status === 'processing') {
     label.textContent = 'Analyse…';
@@ -913,6 +1069,11 @@ function renderLevelScreen() {
           <span class="p-record-label" id="lv-record-label">${t('level.record')}</span>
         </div>
 
+        <!-- Live mic level meter -->
+        <div class="p-level-track" aria-hidden="true">
+          <div class="p-level-bar" id="lv-level-bar"></div>
+        </div>
+
         <!-- Status -->
         <div class="p-status" id="lv-status" aria-live="polite"></div>
 
@@ -983,6 +1144,11 @@ async function handleLvListen(text) {
 }
 
 async function handleLvRecord(item) {
+  // Tap-while-recording = cancel.
+  if (levelState.status === 'recording' && state.activeController) {
+    state.activeController.cancel('user');
+    return;
+  }
   if (levelState.status === 'recording') return;
 
   state.engines.tts?.stop?.();
@@ -990,11 +1156,19 @@ async function handleLvRecord(item) {
 
   setLvRecordUI('recording');
   levelState.status = 'recording';
+  setLevelBar('lv-level-bar', 0);
 
   const statusEl = document.getElementById('lv-status');
 
+  const controller = new AssessmentController(state.engines.assessment);
+  state.activeController = controller;
+
   try {
-    const result = await state.engines.assessment.assess(item.text, status => {
+    const result = await controller.run(item.text, status => {
+      if (typeof status === 'object' && status?.type === 'level') {
+        setLevelBar('lv-level-bar', status.rms);
+        return;
+      }
       applyAssessmentStatus(
         (text, type) => setStatusEl(statusEl, text, type),
         status
@@ -1005,6 +1179,7 @@ async function handleLvRecord(item) {
       levelState.status = 'idle';
       levelState.lastResult = null;
       setLvRecordUI('idle');
+      setLevelBar('lv-level-bar', 0);
       setStatusEl(statusEl, describeAssessmentFailure(result), 'error');
       return;
     }
@@ -1014,12 +1189,17 @@ async function handleLvRecord(item) {
     levelState.recordingBlob = result.recordingBlob ?? null;
 
     setLvRecordUI('done');
+    setLevelBar('lv-level-bar', 0);
     setStatusEl(statusEl, '');
     showLvResults(result);
   } catch (err) {
     levelState.status = 'idle';
     setLvRecordUI('idle');
+    setLevelBar('lv-level-bar', 0);
     setStatusEl(statusEl, describeAssessmentError(err), 'error');
+    maybeOfferFallbackEngine(err);
+  } finally {
+    if (state.activeController === controller) state.activeController = null;
   }
 }
 
@@ -1035,8 +1215,9 @@ function setLvRecordUI(status) {
   ring?.classList.toggle('p-record-ring--active',  status === 'recording');
 
   if (status === 'recording') {
-    label.textContent  = t('level.recording');
-    btn.disabled       = true;
+    // Keep the button enabled so the user can tap to cancel.
+    label.textContent  = t('engine.tapToCancel');
+    btn.disabled       = false;
     if (listenBtn) listenBtn.disabled = true;
   } else if (status === 'processing') {
     label.textContent  = t('engine.processing');
@@ -1512,6 +1693,11 @@ function renderMultiPlaying() {
           <span class="p-record-label" id="multi-record-label">${t('multi.record')}</span>
         </div>
 
+        <!-- Live mic level meter -->
+        <div class="p-level-track" aria-hidden="true">
+          <div class="p-level-bar" id="multi-level-bar"></div>
+        </div>
+
         <!-- Status -->
         <div class="p-status" id="multi-status" aria-live="polite"></div>
 
@@ -1556,6 +1742,11 @@ async function handleMultiListen(text) {
 }
 
 async function handleMultiRecord(text) {
+  // Tap-while-recording = cancel.
+  if (multiState.status === 'recording' && state.activeController) {
+    state.activeController.cancel('user');
+    return;
+  }
   if (multiState.status === 'recording') return;
 
   state.engines.tts?.stop?.();
@@ -1573,8 +1764,9 @@ async function handleMultiRecord(text) {
   btnEl.classList.add('p-record-btn--recording');
   ringEl?.classList.add('p-record-ring--active');
   labelEl.textContent = t('multi.recording');
-  btnEl.disabled = true;
+  // Don't disable the record button — tap again to cancel.
   listenBtn.disabled = true;
+  setLevelBar('multi-level-bar', 0);
 
   // Helper to put the turn back in a "ready to re-record" state without
   // advancing the player or storing a score.
@@ -1585,14 +1777,22 @@ async function handleMultiRecord(text) {
     labelEl.textContent = t('multi.record');
     btnEl.disabled = false;
     listenBtn.disabled = false;
+    setLevelBar('multi-level-bar', 0);
     setStatusEl(statusEl, message, 'error');
     // Keep the phrase card fully visible so the player can try again.
     document.getElementById('multi-phrase-card')?.classList.remove('multi-phrase-card--small');
     document.getElementById('multi-score-reveal')?.classList.add('hidden');
   };
 
+  const controller = new AssessmentController(state.engines.assessment);
+  state.activeController = controller;
+
   try {
-    const result = await state.engines.assessment.assess(text, status => {
+    const result = await controller.run(text, status => {
+      if (typeof status === 'object' && status?.type === 'level') {
+        setLevelBar('multi-level-bar', status.rms);
+        return;
+      }
       applyAssessmentStatus(
         (text, type) => setStatusEl(statusEl, text, type),
         status
@@ -1623,6 +1823,7 @@ async function handleMultiRecord(text) {
     ringEl?.classList.remove('p-record-ring--active');
     labelEl.textContent = '';
     setStatusEl(statusEl, '');
+    setLevelBar('multi-level-bar', 0);
 
     // Show score
     const revealEl = document.getElementById('multi-score-reveal');
@@ -1649,6 +1850,9 @@ async function handleMultiRecord(text) {
     }
   } catch (err) {
     resetForRetry(describeAssessmentError(err));
+    maybeOfferFallbackEngine(err);
+  } finally {
+    if (state.activeController === controller) state.activeController = null;
   }
 }
 
@@ -1968,6 +2172,16 @@ function renderSettingsScreen() {
             </div>
           </section>
 
+          <!-- Debug / Recent failures -->
+          <details class="debug-panel" id="debug-panel">
+            <summary>${t('settings.debug.title')}</summary>
+            <div id="debug-panel-content">${renderDebugLogHtml()}</div>
+            <div class="debug-actions">
+              <button type="button" id="debug-copy-btn">${t('action.copy')}</button>
+              <button type="button" id="debug-clear-btn">${t('settings.debug.clear')}</button>
+            </div>
+          </details>
+
           <!-- Save button -->
           <div style="padding: var(--space-6) 0 var(--space-4)">
             <button class="btn btn-primary btn-full" id="save-settings-btn" type="button">
@@ -1982,6 +2196,27 @@ function renderSettingsScreen() {
 
   attachSettingsEvents();
   populateVoiceList();
+}
+
+function renderDebugLogHtml() {
+  const entries = getDebugLog();
+  if (!entries.length) {
+    return `<p class="debug-empty">${t('settings.debug.empty')}</p>`;
+  }
+  const rows = entries.slice().reverse().map(e => {
+    const time = new Date(e.t).toLocaleTimeString();
+    const code = esc(e.code || '-');
+    const engine = esc(e.engine || '-');
+    const msg = esc((e.message || '').slice(0, 80));
+    const ref = esc((e.reference || '').slice(0, 40));
+    return `<tr><td>${time}</td><td>${code}</td><td>${engine}</td><td>${msg}</td><td>${ref}</td></tr>`;
+  }).join('');
+  return `
+    <table class="debug-table">
+      <thead><tr><th>t</th><th>code</th><th>engine</th><th>message</th><th>ref</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
 }
 
 // ---------------------------------------------------------------------------
@@ -2057,6 +2292,39 @@ function attachSettingsEvents() {
       } finally {
         testBtn.disabled = false;
       }
+    });
+  }
+
+  // Debug panel — copy log as JSON
+  const copyBtn = document.getElementById('debug-copy-btn');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', async () => {
+      const payload = JSON.stringify(getDebugLog(), null, 2);
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(payload);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = payload;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        showToast(t('settings.debug.copied'), 'success');
+      } catch (err) {
+        showToast(`Error: ${err.message}`, 'error');
+      }
+    });
+  }
+
+  // Debug panel — clear log
+  const clearBtn = document.getElementById('debug-clear-btn');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      clearDebugLog();
+      const content = document.getElementById('debug-panel-content');
+      if (content) content.innerHTML = renderDebugLogHtml();
     });
   }
 
@@ -2185,6 +2453,15 @@ async function init() {
 
   // Initialise engines
   reinitEngines();
+
+  // Release the mic aggressively when the tab is hidden or the page is
+  // unloaded. Without this, a recording in progress keeps the mic indicator
+  // on indefinitely after a Cmd-Tab or phone lock.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) cancelActiveAssessment('hidden');
+  });
+  window.addEventListener('pagehide',     () => cancelActiveAssessment('pagehide'));
+  window.addEventListener('beforeunload',  () => cancelActiveAssessment('unload'));
 
   // Determine initial screen
   if (state.settings.firstLaunch) {
