@@ -984,10 +984,10 @@ export function playNinjaAnimation(container, result, options = {}) {
         ? () => { const a = new Audio(URL.createObjectURL(recordingBlob)); a.play(); }
         : null,   always: false },
       { label: '↺',  title: 'Retry',   handler: onRetry,      always: true,  isRetry: true },
-      { label: '→',  title: 'Next',    handler: onNext,       always: false },
+      { label: '→',  title: 'Next',    handler: onNext,       always: false, isNext:  true },
     ];
 
-    buttons.forEach(({ label, title, handler, isRetry }) => {
+    buttons.forEach(({ label, title, handler, isRetry, isNext }) => {
       const btn = document.createElement('button');
       btn.innerHTML   = `<span style="font-size:20px">${label}</span><br><span style="font-size:11px">${title}</span>`;
       btn.title       = title;
@@ -1020,15 +1020,16 @@ export function playNinjaAnimation(container, result, options = {}) {
         btn.addEventListener('mouseup',    () => { btn.style.transform = 'scale(1)'; });
 
         btn.addEventListener('click', () => {
-          if (isRetry) {
-            // Restore practice screen elements
+          if (isRetry || isNext) {
+            // Restore practice screen elements and tear down the overlay so the
+            // underlying level screen (or summary) becomes visible again.
             practiceEls.forEach(el => {
               el.style.opacity       = '';
               el.style.transition    = '';
               el.style.pointerEvents = '';
             });
             overlay.remove();
-            if (onRetry) onRetry();
+            if (handler) handler();
           } else {
             handler();
           }

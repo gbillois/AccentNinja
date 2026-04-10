@@ -26,6 +26,9 @@ const DEFAULT_SETTINGS = {
   theme:            'dark',
   firstLaunch:      true,
   resultsDisplay:   'ninja',   // 'ninja' | 'classic'
+  // Per-level stats keyed by level number:
+  //   { [num]: { completions: int, bestScore: int, lastScore: int } }
+  levelStats:       {},
 };
 
 // ===========================================================================
@@ -59,6 +62,7 @@ const levelState = {
   status:       'idle', // 'idle' | 'recording' | 'done'
   recordingBlob: null,
   lastResult:    null,
+  completionRecorded: false,  // guard so the completion counter ticks once per run
 };
 
 // Multiplayer state
@@ -337,21 +341,26 @@ function renderHomeScreen() {
 
         <div class="level-grid" id="level-grid">
           ${levels.map(([num, level]) => {
-            const hasItems = level.items?.length > 0;
-            const locked   = !hasItems;
-            const name     = state.settings.language === 'en'
+            const hasItems    = level.items?.length > 0;
+            const locked      = !hasItems;
+            const name        = state.settings.language === 'en'
               ? (level.nameEn || level.name)
               : level.name;
+            const stats       = state.settings.levelStats?.[num];
+            const completions = stats?.completions || 0;
+            const bestScore   = stats?.bestScore   || 0;
             return `
               <button
-                class="level-card ${locked ? 'level-card--locked' : ''}"
+                class="level-card ${locked ? 'level-card--locked' : ''} ${completions > 0 ? 'level-card--complete' : ''}"
                 data-level="${num}"
                 ${locked ? 'aria-disabled="true"' : ''}
                 title="${esc(name)}"
               >
+                ${completions > 0 ? `<span class="level-badge" title="${completions} ${t('home.level.timesCompleted')}">${completions}×</span>` : ''}
                 <span class="level-number">${num}</span>
                 <span class="level-icon">${locked ? '🔒' : '⚡'}</span>
                 <span class="level-name">${esc(name)}</span>
+                ${completions > 0 ? `<span class="level-best">${bestScore}%</span>` : ''}
               </button>
             `;
           }).join('')}
@@ -390,9 +399,26 @@ function renderHomeScreen() {
       levelState.status      = 'idle';
       levelState.lastResult  = null;
       levelState.recordingBlob = null;
+      levelState.completionRecorded = false;
       navigate('level');
     });
   });
+}
+
+// ---------------------------------------------------------------------------
+// Level stats — persistent counter of completions / best score per level
+// ---------------------------------------------------------------------------
+
+function recordLevelCompletion(levelNum, avgScore) {
+  const stats   = { ...(state.settings.levelStats || {}) };
+  const current = { ...(stats[levelNum] || { completions: 0, bestScore: 0, lastScore: 0 }) };
+  current.completions = (current.completions || 0) + 1;
+  current.bestScore   = Math.max(current.bestScore || 0, avgScore);
+  current.lastScore   = avgScore;
+  stats[levelNum]     = current;
+  // Fire-and-forget: in-memory state.settings is updated synchronously inside
+  // persistSettings, so the home screen sees the new value on next render.
+  persistSettings({ levelStats: stats }).catch(() => {});
 }
 
 // ===========================================================================
@@ -1216,11 +1242,25 @@ function renderLevelSummary() {
     ? (level.nameEn || level.name)
     : level.name;
 
-  const scores   = levelState.results.map(r => Math.round(r.result?.pronScore ?? 0));
+  // Coerce defensively: an undefined/NaN pronScore would otherwise poison the
+  // sum and turn the average into NaN, which renders as empty in the UI.
+  const scores   = levelState.results
+    .map(r => Number(r.result?.pronScore))
+    .filter(n => Number.isFinite(n));
   const avgScore = scores.length
     ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
     : 0;
   const avgCls   = scoreClass(avgScore);
+
+  // Bump the persistent completion counter exactly once per level run.
+  if (!levelState.completionRecorded) {
+    levelState.completionRecorded = true;
+    recordLevelCompletion(levelState.levelNum, avgScore);
+  }
+
+  const stats         = state.settings.levelStats?.[levelState.levelNum] || {};
+  const completions   = stats.completions || 0;
+  const bestScore     = stats.bestScore   || 0;
 
   const screen = document.getElementById('screen-level');
   screen.innerHTML = `
@@ -1240,6 +1280,10 @@ function renderLevelSummary() {
           </div>
           <div class="p-score-bar" style="max-width:200px;margin:0 auto">
             <div class="p-score-fill p-score-fill--${avgCls}" style="width:${avgScore}%"></div>
+          </div>
+          <div class="lv-summary-stats">
+            <span class="lv-summary-stat">🏅 ${t('level.complete.completions')} <strong>${completions}</strong></span>
+            <span class="lv-summary-stat">⭐ ${t('level.complete.bestScore')} <strong>${bestScore}</strong></span>
           </div>
         </div>
 
@@ -1279,6 +1323,7 @@ function renderLevelSummary() {
     levelState.status      = 'idle';
     levelState.lastResult  = null;
     levelState.recordingBlob = null;
+    levelState.completionRecorded = false;
     renderLevelScreen();
   });
 

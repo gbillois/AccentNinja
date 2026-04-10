@@ -64,6 +64,7 @@ const STRINGS = {
     'home.levels.coming5to10': 'Niveaux 5–10 bientôt disponibles',
     'home.level.locked': 'Verrouillé',
     'home.level.complete': 'Terminé',
+    'home.level.timesCompleted': 'fois réussi',
 
     'level.item': 'Exercice',
     'level.of': 'sur',
@@ -79,6 +80,8 @@ const STRINGS = {
     'level.retry': 'Réessayer',
     'level.complete.title': 'Niveau terminé !',
     'level.complete.score': 'Score moyen',
+    'level.complete.completions': 'Réussites :',
+    'level.complete.bestScore': 'Meilleur score :',
     'level.complete.retryLevel': 'Recommencer le niveau',
     'level.complete.home': 'Retour à l\'accueil',
     'level.wordAnalysis': 'Analyse mot par mot',
@@ -216,6 +219,7 @@ const STRINGS = {
     'home.levels.coming5to10': 'Levels 5–10 coming soon',
     'home.level.locked': 'Locked',
     'home.level.complete': 'Complete',
+    'home.level.timesCompleted': 'times completed',
 
     'level.item': 'Exercise',
     'level.of': 'of',
@@ -231,6 +235,8 @@ const STRINGS = {
     'level.retry': 'Try again',
     'level.complete.title': 'Level complete!',
     'level.complete.score': 'Average score',
+    'level.complete.completions': 'Completions:',
+    'level.complete.bestScore': 'Best score:',
     'level.complete.retryLevel': 'Retry level',
     'level.complete.home': 'Back to home',
     'level.wordAnalysis': 'Word-by-word analysis',
