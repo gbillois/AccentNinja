@@ -1719,6 +1719,263 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 
 /* ===========================================================================
+   17b. Level cards — name label
+   =========================================================================== */
+
+.level-name {
+  font-size: 7px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+  text-align: center;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 var(--space-1);
+  line-height: 1.1;
+}
+
+/* ===========================================================================
+   17c. Level practice screen (Levels 1–10)
+   =========================================================================== */
+
+.practice-level {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: var(--space-4) var(--space-4) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* Progress bar */
+.lv-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.lv-progress-bar {
+  height: 6px;
+  background: var(--color-border);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.lv-progress-fill {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: 99px;
+  transition: width 0.4s ease;
+}
+
+.lv-progress-label {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  text-align: right;
+}
+
+/* Item card */
+.lv-item-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.lv-item-type {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-primary);
+  margin: 0;
+}
+
+.lv-item-text {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.lv-item-ipa {
+  font-size: var(--text-base);
+  color: var(--color-text-muted);
+  font-style: italic;
+  margin: 0;
+}
+
+.lv-item-translation {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  margin: 0;
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--color-border);
+}
+
+/* Focus phoneme badges */
+.lv-phonemes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding-top: var(--space-1);
+}
+
+.lv-phoneme-badge {
+  display: inline-block;
+  padding: 2px var(--space-2);
+  background: var(--color-primary-dim);
+  color: var(--color-primary);
+  border-radius: 99px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  font-family: monospace;
+}
+
+/* Collapsible tips */
+.lv-tips {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.lv-tips-summary {
+  cursor: pointer;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  list-style: none;
+  user-select: none;
+}
+
+.lv-tips-summary::-webkit-details-marker { display: none; }
+
+.lv-tips[open] .lv-tips-summary {
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.lv-tips-list {
+  margin: 0;
+  padding: var(--space-3) var(--space-4) var(--space-3) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.lv-tips-list li {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+/* ===========================================================================
+   17d. Level summary screen
+   =========================================================================== */
+
+.lv-summary {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-4) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.lv-summary-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  text-align: center;
+}
+
+.lv-summary-trophy {
+  font-size: 64px;
+  line-height: 1;
+}
+
+.lv-summary-title {
+  font-size: var(--text-2xl);
+  font-weight: 800;
+  margin: 0;
+}
+
+.lv-summary-avg {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.lv-summary-avg-label {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.lv-summary-avg-value {
+  font-size: var(--text-4xl);
+  font-weight: 900;
+  line-height: 1;
+}
+
+/* Per-item scores list */
+.lv-summary-items {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.lv-summary-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.lv-summary-row:last-child { border-bottom: none; }
+
+.lv-summary-row-num {
+  flex-shrink: 0;
+  width: 20px;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  font-weight: 700;
+  text-align: center;
+}
+
+.lv-summary-row-text {
+  flex: 1;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lv-summary-row-score {
+  flex-shrink: 0;
+  font-size: var(--text-base);
+  font-weight: 700;
+}
+
+/* Summary action buttons */
+.lv-summary-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ===========================================================================
    18. Responsive — clamp to max-width on desktop
    =========================================================================== */
 
