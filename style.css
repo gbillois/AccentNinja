@@ -844,6 +844,33 @@ input, select, textarea { font: inherit; color: inherit; }
   font-size: 8px;
 }
 
+/* Persistent completion counter badge — top-right of the level card */
+.level-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+
+/* Best-score caption under the level name */
+.level-best {
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--color-success, var(--color-primary));
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
 /* Quick start button */
 .quick-start-card {
   background: linear-gradient(135deg, var(--color-primary-dim), var(--color-surface));
@@ -1924,6 +1951,26 @@ input, select, textarea { font: inherit; color: inherit; }
   font-size: var(--text-4xl);
   font-weight: 900;
   line-height: 1;
+}
+
+/* Persistent stats badges shown under the average score */
+.lv-summary-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-2);
+}
+
+.lv-summary-stat {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.lv-summary-stat strong {
+  color: var(--color-text);
+  font-weight: 700;
+  margin-left: 4px;
 }
 
 /* Per-item scores list */
