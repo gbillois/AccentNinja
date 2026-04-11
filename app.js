@@ -548,7 +548,12 @@ async function handleListen() {
 }
 
 async function handleRecord() {
-  if (practiceState.status === 'recording') return; // guard double-tap
+  // If already recording, a tap means "stop now" — ask the engine to finalise
+  // the in-progress recognition instead of starting a new one.
+  if (practiceState.status === 'recording') {
+    state.engines.assessment?.stop?.();
+    return;
+  }
 
   const phrase = document.getElementById('phrase-input')?.value?.trim();
   if (!phrase) {
@@ -684,8 +689,9 @@ function setRecordUI(status) {
   ring?.classList.toggle('p-record-ring--active', status === 'recording');
 
   if (status === 'recording') {
-    label.textContent = 'Enregistrement…';
-    btn.disabled = true;
+    label.textContent = t('practice.tapToStop');
+    // Keep the button enabled so the user can tap to stop recording early.
+    btn.disabled = false;
     listenBtn.disabled = true;
   } else if (status === 'processing') {
     label.textContent = 'Analyse…';
@@ -1009,7 +1015,11 @@ async function handleLvListen(text) {
 }
 
 async function handleLvRecord(item) {
-  if (levelState.status === 'recording') return;
+  // If already recording, a tap means "stop now".
+  if (levelState.status === 'recording') {
+    state.engines.assessment?.stop?.();
+    return;
+  }
 
   state.engines.tts?.stop?.();
   document.getElementById('lv-results')?.classList.add('hidden');
@@ -1061,8 +1071,9 @@ function setLvRecordUI(status) {
   ring?.classList.toggle('p-record-ring--active',  status === 'recording');
 
   if (status === 'recording') {
-    label.textContent  = t('level.recording');
-    btn.disabled       = true;
+    label.textContent  = t('level.tapToStop');
+    // Keep the button enabled so the user can tap it to stop recording early.
+    btn.disabled       = false;
     if (listenBtn) listenBtn.disabled = true;
   } else if (status === 'processing') {
     label.textContent  = t('engine.processing');
@@ -1601,7 +1612,11 @@ async function handleMultiListen(text) {
 }
 
 async function handleMultiRecord(text) {
-  if (multiState.status === 'recording') return;
+  // If already recording, a tap means "stop now".
+  if (multiState.status === 'recording') {
+    state.engines.assessment?.stop?.();
+    return;
+  }
 
   state.engines.tts?.stop?.();
 
@@ -1617,8 +1632,9 @@ async function handleMultiRecord(text) {
   multiState.status = 'recording';
   btnEl.classList.add('p-record-btn--recording');
   ringEl?.classList.add('p-record-ring--active');
-  labelEl.textContent = t('multi.recording');
-  btnEl.disabled = true;
+  labelEl.textContent = t('multi.tapToStop');
+  // Keep the button enabled so the user can tap it to stop recording early.
+  btnEl.disabled = false;
   listenBtn.disabled = true;
 
   // Helper to put the turn back in a "ready to re-record" state without

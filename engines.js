@@ -459,6 +459,7 @@ export class AzureTTS {
 export class AzureAssessmentEngine {
   constructor(settings) {
     this.settings = settings;
+    this._recognizer = null;
   }
 
   _buildSpeechConfig() {
@@ -531,6 +532,7 @@ export class AzureAssessmentEngine {
       const audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
       recognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);
       pronConfig.applyTo(recognizer);
+      this._recognizer = recognizer;
     } catch (err) {
       try { recorder.releaseStream(); } catch { /* ignore */ }
       throw err;
@@ -546,6 +548,7 @@ export class AzureAssessmentEngine {
         settled = true;
         if (timeoutId) clearTimeout(timeoutId);
         try { recognizer.close(); } catch { /* ignore */ }
+        this._recognizer = null;
         const recordingBlob = await recorder.stop();
         if (error) { reject(error); return; }
         const parsed = parseAzureResult(result, SpeechSDK);
@@ -564,6 +567,26 @@ export class AzureAssessmentEngine {
         err  => finish(null, makeAssessmentError(ASSESSMENT_ERROR.UNKNOWN, `Azure recognition failed: ${err}`))
       );
     });
+  }
+
+  /**
+   * Request an early stop of the in-progress recognition. Azure will flush
+   * whatever it has captured so far and fire the `recognizeOnceAsync` success
+   * callback with a final result — which flows through the existing finish()
+   * path so the UI gets its assessment.
+   *
+   * No-op when nothing is being recognized (e.g. during the initial countdown
+   * before the recognizer is created).
+   */
+  stop() {
+    const recognizer = this._recognizer;
+    if (!recognizer) return;
+    try {
+      recognizer.stopContinuousRecognitionAsync(
+        () => { /* ignore */ },
+        () => { /* ignore */ }
+      );
+    } catch { /* ignore */ }
   }
 
   /**
