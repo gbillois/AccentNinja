@@ -78,11 +78,13 @@ const COUNTDOWN_STEP_MS = 700;
  * Used by both assessment engines to give the mic time to initialise before
  * the user is expected to speak.
  */
-async function runCountdown(onStatus) {
+async function runCountdown(onStatus, shouldAbort = () => false) {
   onStatus('countdown-3');
   await sleep(COUNTDOWN_STEP_MS);
+  if (shouldAbort()) return;
   onStatus('countdown-2');
   await sleep(COUNTDOWN_STEP_MS);
+  if (shouldAbort()) return;
   onStatus('countdown-1');
   await sleep(COUNTDOWN_STEP_MS);
 }
@@ -459,6 +461,15 @@ export class AzureTTS {
 export class AzureAssessmentEngine {
   constructor(settings) {
     this.settings = settings;
+    this._stopFn = null;
+  }
+
+  stop() {
+    const fn = this._stopFn;
+    if (fn) {
+      this._stopFn = null;
+      fn();
+    }
   }
 
   _buildSpeechConfig() {
@@ -521,10 +532,21 @@ export class AzureAssessmentEngine {
     // but hardware warm-up happens on the first getUserMedia() call.
     const recorder = await startParallelRecorder();
 
+    let earlyAbort = false;
+    this._stopFn = () => {
+      earlyAbort = true;
+      try { recorder.releaseStream(); } catch { /* ignore */ }
+    };
+
     let recognizer;
     try {
       recorder.start();
-      await runCountdown(onStatus);
+      await runCountdown(onStatus, () => earlyAbort);
+
+      if (earlyAbort) {
+        this._stopFn = null;
+        return { engine: 'azure', pronScore: 0, accuracyScore: 0, fluencyScore: 0, completenessScore: 0, prosodyScore: null, recognizedText: '', words: [], raw: {}, recordingBlob: null };
+      }
 
       const speechConfig = this._buildSpeechConfig();
       const pronConfig = this._buildPronConfig(referenceText);
@@ -532,6 +554,7 @@ export class AzureAssessmentEngine {
       recognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);
       pronConfig.applyTo(recognizer);
     } catch (err) {
+      this._stopFn = null;
       try { recorder.releaseStream(); } catch { /* ignore */ }
       throw err;
     }
@@ -544,13 +567,21 @@ export class AzureAssessmentEngine {
       const finish = async (result, error) => {
         if (settled) return;
         settled = true;
+        this._stopFn = null;
         if (timeoutId) clearTimeout(timeoutId);
         try { recognizer.close(); } catch { /* ignore */ }
         const recordingBlob = await recorder.stop();
         if (error) { reject(error); return; }
-        const parsed = parseAzureResult(result, SpeechSDK);
+        const parsed = result
+          ? parseAzureResult(result, SpeechSDK)
+          : { engine: 'azure', pronScore: 0, accuracyScore: 0, fluencyScore: 0, completenessScore: 0, prosodyScore: null, recognizedText: '', words: [], raw: {} };
         tagFailureFromRecorder(parsed, recorder, parsed.recognizedText);
         resolve({ ...parsed, recordingBlob });
+      };
+
+      this._stopFn = () => {
+        try { recognizer.close(); } catch { /* ignore */ }
+        finish(null, null);
       };
 
       recognizer.sessionStarted = () => onStatus('recording');
@@ -592,6 +623,7 @@ export class WebSpeechAssessmentEngine {
   constructor(settings) {
     this.settings = settings;
     this._recognition = null;
+    this._stopFn = null;
   }
 
   /**
@@ -612,10 +644,21 @@ export class WebSpeechAssessmentEngine {
 
     const recorder = await startParallelRecorder();
 
+    let earlyAbort = false;
+    this._stopFn = () => {
+      earlyAbort = true;
+      try { recorder.releaseStream(); } catch { /* ignore */ }
+    };
+
     let recognition;
     try {
       recorder.start();
-      await runCountdown(onStatus);
+      await runCountdown(onStatus, () => earlyAbort);
+
+      if (earlyAbort) {
+        this._stopFn = null;
+        return { engine: 'web', pronScore: 0, accuracyScore: 0, fluencyScore: 0, completenessScore: 0, prosodyScore: null, recognizedText: '', words: [], raw: {}, recordingBlob: null };
+      }
 
       recognition = new SpeechRecognition();
       const locale = this.settings.accentTarget === 'uk' ? 'en-GB' : 'en-US';
@@ -624,7 +667,9 @@ export class WebSpeechAssessmentEngine {
       recognition.interimResults = false;
       recognition.maxAlternatives = 1;
       this._recognition = recognition;
+      this._stopFn = null;
     } catch (err) {
+      this._stopFn = null;
       try { recorder.releaseStream(); } catch { /* ignore */ }
       throw err;
     }
@@ -691,6 +736,12 @@ export class WebSpeechAssessmentEngine {
   }
 
   stop() {
+    const fn = this._stopFn;
+    if (fn) {
+      this._stopFn = null;
+      fn();
+      return;
+    }
     if (this._recognition) {
       try { this._recognition.stop(); } catch { /* ignore */ }
       this._recognition = null;
