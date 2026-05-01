@@ -1568,8 +1568,11 @@ function renderMultiPlaying() {
 
         <!-- Score reveal (hidden until done) -->
         <div class="multi-score-reveal hidden" id="multi-score-reveal">
-          <div class="multi-score-big" id="multi-score-value"></div>
-          <div class="multi-score-detail" id="multi-score-detail"></div>
+          <div class="p-scores" id="multi-scores"></div>
+          <div class="p-words-wrap">
+            <p class="p-label">${t('level.wordAnalysis')}</p>
+            <div class="p-words" id="multi-words"></div>
+          </div>
           <button class="btn btn-primary btn-lg" id="multi-next-btn">${t('multi.next')}</button>
         </div>
 
@@ -1680,16 +1683,46 @@ async function handleMultiRecord(text) {
 
     // Show score
     const revealEl = document.getElementById('multi-score-reveal');
-    const valueEl  = document.getElementById('multi-score-value');
-    const detailEl = document.getElementById('multi-score-detail');
+    const scoresEl = document.getElementById('multi-scores');
+    const wordsEl  = document.getElementById('multi-words');
 
-    const cls = scoreClass(score);
-    valueEl.innerHTML = `<span class="p-score-value--${cls}">${score}</span><span class="multi-score-label"> / 100</span>`;
+    const scoreItems = [
+      { label: t('results.globalScore'), value: result.pronScore,         icon: '🏆' },
+      { label: t('results.accuracy'),    value: result.accuracyScore,     icon: '🎯' },
+      { label: t('results.fluency'),     value: result.fluencyScore,      icon: '🌊' },
+      { label: t('results.completeness'),value: result.completenessScore, icon: '✅' },
+    ];
+    if (result.prosodyScore != null) {
+      scoreItems.push({ label: t('results.prosody'), value: result.prosodyScore, icon: '🎵' });
+    }
 
-    const details = [];
-    if (result.accuracyScore != null) details.push(`${t('results.accuracy')}: ${Math.round(result.accuracyScore)}`);
-    if (result.fluencyScore != null)  details.push(`${t('results.fluency')}: ${Math.round(result.fluencyScore)}`);
-    detailEl.textContent = details.join(' · ');
+    scoresEl.innerHTML = scoreItems.map(item => {
+      const v   = Math.round(item.value ?? 0);
+      const cls = scoreClass(v);
+      return `
+        <div class="p-score-item">
+          <div class="p-score-top">
+            <span class="p-score-label">${item.icon} ${item.label}</span>
+            <span class="p-score-value p-score-value--${cls}">${v}</span>
+          </div>
+          <div class="p-score-bar">
+            <div class="p-score-fill p-score-fill--${cls}" style="width:${v}%"></div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    if (result.words?.length) {
+      wordsEl.innerHTML = result.words.map(w => {
+        const type = (w.errorType ?? 'None').toLowerCase();
+        const tip  = phonemeDetail(w);
+        return `<span class="p-word p-word--${type}" title="${esc(tip)}">${esc(w.word)}</span>`;
+      }).join(' ');
+    } else if (result.recognizedText) {
+      wordsEl.innerHTML = `<span class="text-muted text-sm">"${esc(result.recognizedText)}"</span>`;
+    } else {
+      wordsEl.innerHTML = '';
+    }
 
     revealEl.classList.remove('hidden');
 
