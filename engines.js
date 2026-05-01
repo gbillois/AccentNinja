@@ -71,7 +71,7 @@ const SILENCE_RMS_THRESHOLD = 0.012;
 const MIN_SPEECH_DURATION_MS = 250;
 
 /** Per-step duration of the 3-2-1 warm-up countdown (ms). */
-const COUNTDOWN_STEP_MS = 700;
+const COUNTDOWN_STEP_MS = 400;
 
 /**
  * Run a 3-2-1 countdown, emitting status events for the UI to display.
