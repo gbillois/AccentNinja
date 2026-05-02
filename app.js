@@ -5,7 +5,7 @@
 
 import { createTTSEngine, createAssessmentEngine, AZURE_VOICES, AZURE_REGIONS, webVoicePriority } from './engines.js';
 import { t, setLanguage } from './i18n.js';
-import { CORPUS, MULTIPLAYER_PHRASES } from './corpus.js';
+import { CORPUS, MULTIPLAYER_PHRASES, MULTIPLAYER_FUN_PHRASES } from './corpus.js';
 import { playNinjaAnimation } from './ninja.js';
 
 // ===========================================================================
@@ -70,6 +70,7 @@ const multiState = {
   phase:        'setup',  // 'setup' | 'playing' | 'results'
   playerCount:  2,
   roundCount:   5,        // phrases per player
+  funMode:      false,    // tongue-twister / fun phrases instead of pedagogical ones
   players:      [],       // { name, scores: number[], details: object[] }
   currentPlayer: 0,
   currentRound:  0,
@@ -1428,6 +1429,14 @@ function renderMultiSetup() {
           </div>
         </section>
 
+        <!-- Fun mode toggle -->
+        <section class="multi-field">
+          <label class="p-label">${t('multi.funMode')}</label>
+          <button class="btn btn-sm ${multiState.funMode ? 'btn-primary' : 'btn-ghost'}" id="fun-mode-toggle" type="button">
+            ${multiState.funMode ? t('multi.funMode.on') : t('multi.funMode.off')}
+          </button>
+        </section>
+
         <!-- Player names -->
         <section class="multi-field">
           <label class="p-label">${t('multi.playerName')}s</label>
@@ -1436,7 +1445,7 @@ function renderMultiSetup() {
           </div>
         </section>
 
-        <p class="text-muted text-sm text-center">${t('multi.difficulty')}</p>
+        <p class="text-muted text-sm text-center" id="mode-hint">${multiState.funMode ? t('multi.funMode.hint') : t('multi.difficulty')}</p>
 
         <button class="btn btn-primary btn-full btn-lg" id="multi-start-btn" type="button">
           ${t('multi.start')}
@@ -1478,6 +1487,15 @@ function renderMultiSetup() {
     }
   });
 
+  // Fun mode toggle
+  document.getElementById('fun-mode-toggle').addEventListener('click', () => {
+    multiState.funMode = !multiState.funMode;
+    const btn = document.getElementById('fun-mode-toggle');
+    btn.className = `btn btn-sm ${multiState.funMode ? 'btn-primary' : 'btn-ghost'}`;
+    btn.textContent = multiState.funMode ? t('multi.funMode.on') : t('multi.funMode.off');
+    document.getElementById('mode-hint').textContent = multiState.funMode ? t('multi.funMode.hint') : t('multi.difficulty');
+  });
+
   // Start game
   document.getElementById('multi-start-btn').addEventListener('click', () => {
     // Collect player names
@@ -1494,7 +1512,8 @@ function renderMultiSetup() {
     multiState.currentRound  = 0;
     multiState.status        = 'idle';
     multiState.lastResult    = null;
-    multiState.phrases       = pickMultiPhrases(multiState.roundCount);
+    const pool = multiState.funMode ? MULTIPLAYER_FUN_PHRASES : MULTIPLAYER_PHRASES;
+    multiState.phrases       = pickMultiPhrases(multiState.roundCount, pool);
     multiState.phase         = 'playing';
     renderMultiplayerScreen();
   });
@@ -1511,8 +1530,8 @@ function buildPlayerNameInputs(count) {
 }
 
 /** Pick `count` phrases with smoothly ascending difficulty (easy → hard). */
-function pickMultiPhrases(count) {
-  const sorted = [...MULTIPLAYER_PHRASES].sort((a, b) => a.difficulty - b.difficulty);
+function pickMultiPhrases(count, pool = MULTIPLAYER_PHRASES) {
+  const sorted = [...pool].sort((a, b) => a.difficulty - b.difficulty);
   const n = sorted.length;
   const picks = [];
   for (let i = 0; i < count; i++) {

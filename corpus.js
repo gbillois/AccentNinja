@@ -460,6 +460,47 @@ export const MULTIPLAYER_PHRASES = [
   { text: 'The epitome of hyperbole is not synonymous with catastrophe.',                          difficulty: 10 },
 ];
 
+// ---------------------------------------------------------------------------
+// Fun-mode phrases — tongue twisters, nonsense sentences, and classic traps
+// ---------------------------------------------------------------------------
+
+export const MULTIPLAYER_FUN_PHRASES = [
+  // Easy fun (difficulty 1-2)
+  { text: 'My cat is fat and sat on a flat mat.',                                                   difficulty: 1 },
+  { text: 'The big pig did a jig in the fog.',                                                      difficulty: 1 },
+  { text: 'Bob ate a corn cob on a log by a bog.',                                                  difficulty: 1 },
+  { text: 'A fat bat sat on a flat hat.',                                                           difficulty: 2 },
+  { text: 'I wish to wish the wish you wish to wish.',                                              difficulty: 2 },
+
+  // Medium (difficulty 3-4)
+  { text: 'Bad lads had glad dads in the sand.',                                                    difficulty: 3 },
+  { text: 'Fuzzy Wuzzy was a bear. Fuzzy Wuzzy had no hair.',                                       difficulty: 3 },
+  { text: 'There those three thin thieves thought.',                                                difficulty: 3 },
+  { text: 'Toy boat, toy boat, toy boat.',                                                          difficulty: 4 },
+  { text: 'Lesser leather never weathered wetter weather better.',                                  difficulty: 4 },
+  { text: 'Unique New York, unique New York, you know you need unique New York.',                    difficulty: 4 },
+
+  // Hard (difficulty 5-6)
+  { text: 'Moses supposes his toeses are roses, but Moses supposes erroneously.',                   difficulty: 5 },
+  { text: 'A skunk sat on a stump and thunk the stump stunk, but the stump thunk the skunk stunk.', difficulty: 5 },
+  { text: 'Silly Sally swiftly shooed seven silly sheep southward.',                                difficulty: 6 },
+  { text: 'I thought a thought, but the thought I thought was not the thought I thought I thought.', difficulty: 6 },
+
+  // Very hard (difficulty 7-8)
+  { text: 'How can a clam cram in a clean cream can?',                                              difficulty: 7 },
+  { text: 'Send toast to ten tense stout saints\' ten tall tents.',                                 difficulty: 7 },
+  { text: 'Brisk brave brigadiers brandished broad bright blades, blunderbusses, and bludgeons.',   difficulty: 8 },
+  { text: 'The seething sea ceaseth and thus the seething sea sufficeth us.',                       difficulty: 8 },
+
+  // Extreme (difficulty 9-10)
+  { text: 'The sixth sick sheik\'s sixth sheep\'s sick.',                                           difficulty: 9 },
+  { text: 'She sells seashells by the seashore and the shells she sells are seashells for sure.',   difficulty: 9 },
+  { text: 'How much wood would a woodchuck chuck if a woodchuck could chuck wood?',                 difficulty: 9 },
+  { text: 'Peter Piper picked a peck of pickled peppers. Did Peter Piper pick a peck of pickled peppers?', difficulty: 10 },
+  { text: 'Whether the weather is warm, whether the weather is hot, we have to put up with the weather whether we like it or not.', difficulty: 10 },
+  { text: 'Through three cheese trees three free fleas flew. While these fleas flew, freezy breeze blew.', difficulty: 10 },
+];
+
 export const PHONEME_TIPS = {
   'θ': {
     label: 'TH sourd (think)',
