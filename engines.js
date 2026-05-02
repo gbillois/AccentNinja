@@ -740,7 +740,7 @@ export class AzureAssessmentEngine {
 
       if (earlyAbort) {
         recordingBlob = await recorder.stop();
-        return { ...emptyAzureResult(), recordingBlob };
+        return { ...emptyAzureResult(), raw: { error: ASSESSMENT_ERROR.ABORTED }, recordingBlob };
       }
 
       // Attempt 0: live mic streaming.
@@ -764,7 +764,7 @@ export class AzureAssessmentEngine {
       recordingBlob = await recorder.stop();
 
       if (earlyAbort) {
-        return { ...emptyAzureResult(), recordingBlob };
+        return { ...emptyAzureResult(), raw: { error: ASSESSMENT_ERROR.ABORTED }, recordingBlob };
       }
 
       // Happy path
@@ -995,7 +995,7 @@ export class WebSpeechAssessmentEngine {
 
       if (earlyAbort) {
         this._stopFn = null;
-        return { engine: 'web', pronScore: 0, accuracyScore: 0, fluencyScore: 0, completenessScore: 0, prosodyScore: null, recognizedText: '', words: [], raw: {}, recordingBlob: null };
+        return { engine: 'web', pronScore: 0, accuracyScore: 0, fluencyScore: 0, completenessScore: 0, prosodyScore: null, recognizedText: '', words: [], raw: { error: ASSESSMENT_ERROR.ABORTED }, recordingBlob: null };
       }
 
       recognition = new SpeechRecognition();

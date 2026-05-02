@@ -577,7 +577,11 @@ async function handleRecord() {
       practiceState.result = null;
       practiceState.recordingBlob = null;
       setRecordUI('idle');
-      setStatus(describeAssessmentFailure(result), 'error');
+      if (isAbortedAssessment(result)) {
+        setStatus('');
+      } else {
+        setStatus(describeAssessmentFailure(result), 'error');
+      }
       return;
     }
 
@@ -600,6 +604,11 @@ function isValidAssessment(result) {
   if (!result) return false;
   const score = Number(result.pronScore);
   return Number.isFinite(score) && score > 0;
+}
+
+/** True if the assessment was deliberately stopped by the user (no error to display). */
+function isAbortedAssessment(result) {
+  return result?.raw?.error === 'Aborted';
 }
 
 /** Map an error code (from the engine or a raw.error tag) to a user message. */
@@ -1078,7 +1087,11 @@ async function handleLvRecord(item) {
       levelState.status = 'idle';
       levelState.lastResult = null;
       setLvRecordUI('idle');
-      setStatusEl(statusEl, describeAssessmentFailure(result), 'error');
+      if (isAbortedAssessment(result)) {
+        setStatusEl(statusEl, '');
+      } else {
+        setStatusEl(statusEl, describeAssessmentFailure(result), 'error');
+      }
       return;
     }
 
@@ -1683,7 +1696,7 @@ async function handleMultiRecord(text) {
     labelEl.textContent = t('multi.record');
     btnEl.disabled = false;
     listenBtn.disabled = false;
-    setStatusEl(statusEl, message, 'error');
+    setStatusEl(statusEl, message ?? '', message ? 'error' : '');
     // Keep the phrase card fully visible so the player can try again.
     document.getElementById('multi-phrase-card')?.classList.remove('multi-phrase-card--small');
     document.getElementById('multi-score-reveal')?.classList.add('hidden');
@@ -1698,7 +1711,7 @@ async function handleMultiRecord(text) {
     });
 
     if (!isValidAssessment(result)) {
-      resetForRetry(describeAssessmentFailure(result));
+      resetForRetry(isAbortedAssessment(result) ? null : describeAssessmentFailure(result));
       return;
     }
 
