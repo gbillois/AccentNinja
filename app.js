@@ -77,6 +77,7 @@ const multiState = {
   phrases:      [],       // selected phrases for the game
   status:       'idle',   // 'idle' | 'recording' | 'processing' | 'done'
   lastResult:   null,
+  recordingBlob: null,
 };
 
 // ===========================================================================
@@ -468,6 +469,11 @@ function renderPracticeScreen() {
         <!-- Status -->
         <div class="p-status" id="p-status" aria-live="polite"></div>
 
+        <!-- Recording playback (shown after any recording attempt) -->
+        <button class="btn btn-ghost btn-sm" id="p-playback-btn" style="display:${practiceState.recordingBlob ? '' : 'none'}">
+          &#x25B6; Écouter mon enregistrement
+        </button>
+
         <!-- Results -->
         <div class="p-results hidden" id="p-results">
 
@@ -511,6 +517,14 @@ function renderPracticeScreen() {
   document.getElementById('record-btn').addEventListener('click', handleRecord);
   document.getElementById('retry-btn').addEventListener('click', resetPractice);
 
+  document.getElementById('p-playback-btn').addEventListener('click', () => {
+    if (!practiceState.recordingBlob) return;
+    const url = URL.createObjectURL(practiceState.recordingBlob);
+    const audio = new Audio(url);
+    audio.onended = () => URL.revokeObjectURL(url);
+    audio.play();
+  });
+
   // Restore previous result if navigating back
   if (practiceState.status === 'done' && practiceState.result) {
     showResults(practiceState.result);
@@ -548,8 +562,12 @@ async function handleListen() {
 async function handleRecord() {
   if (practiceState.status === 'recording') {
     state.engines.assessment.stop?.();
+    setRecordUI('processing');
+    practiceState.status = 'processing';
+    setStatus('');
     return;
   }
+  if (practiceState.status === 'processing') return;
 
   const phrase = document.getElementById('phrase-input')?.value?.trim();
   if (!phrase) {
@@ -575,7 +593,7 @@ async function handleRecord() {
     if (!isValidAssessment(result)) {
       practiceState.status = 'idle';
       practiceState.result = null;
-      practiceState.recordingBlob = null;
+      practiceState.recordingBlob = result.recordingBlob ?? null;
       setRecordUI('idle');
       if (isAbortedAssessment(result)) {
         setStatus('');
@@ -736,18 +754,23 @@ function setRecordUI(status) {
   btn.classList.toggle('p-record-btn--processing', status === 'processing');
   ring?.classList.toggle('p-record-ring--active', status === 'recording');
 
+  const playbackBtn = document.getElementById('p-playback-btn');
+
   if (status === 'recording') {
     label.textContent = t('practice.stop');
     btn.disabled = false;
     listenBtn.disabled = true;
+    if (playbackBtn) playbackBtn.style.display = 'none';
   } else if (status === 'processing') {
     label.textContent = 'Analyse…';
     btn.disabled = true;
     listenBtn.disabled = true;
+    if (playbackBtn) playbackBtn.style.display = 'none';
   } else {
     label.textContent = 'Appuyer pour enregistrer';
     btn.disabled = false;
     listenBtn.disabled = false;
+    if (playbackBtn) playbackBtn.style.display = practiceState.recordingBlob ? '' : 'none';
   }
 }
 
@@ -1620,6 +1643,11 @@ function renderMultiPlaying() {
         <!-- Status -->
         <div class="p-status" id="multi-status" aria-live="polite"></div>
 
+        <!-- Recording playback (shown after any recording attempt) -->
+        <button class="btn btn-ghost btn-sm" id="multi-playback-btn" style="display:${multiState.recordingBlob ? '' : 'none'}">
+          &#x25B6; Écouter mon enregistrement
+        </button>
+
         <!-- Score reveal (hidden until done) -->
         <div class="multi-score-reveal hidden" id="multi-score-reveal">
           <div class="p-scores" id="multi-scores"></div>
@@ -1647,6 +1675,14 @@ function renderMultiPlaying() {
     handleMultiRecord(phrase.text);
   });
 
+  document.getElementById('multi-playback-btn').addEventListener('click', () => {
+    if (!multiState.recordingBlob) return;
+    const url = URL.createObjectURL(multiState.recordingBlob);
+    const audio = new Audio(url);
+    audio.onended = () => URL.revokeObjectURL(url);
+    audio.play();
+  });
+
   document.getElementById('multi-next-btn').addEventListener('click', advanceMultiTurn);
 }
 
@@ -1664,18 +1700,32 @@ async function handleMultiListen(text) {
 }
 
 async function handleMultiRecord(text) {
-  if (multiState.status === 'recording') {
-    state.engines.assessment.stop?.();
-    return;
-  }
-
-  state.engines.tts?.stop?.();
-
   const ringEl    = document.getElementById('multi-record-ring');
   const btnEl     = document.getElementById('multi-record-btn');
   const labelEl   = document.getElementById('multi-record-label');
   const statusEl  = document.getElementById('multi-status');
   const listenBtn = document.getElementById('multi-listen-btn');
+  const playBtn   = document.getElementById('multi-playback-btn');
+
+  if (multiState.status === 'recording') {
+    state.engines.assessment.stop?.();
+    multiState.status = 'processing';
+    btnEl.classList.remove('p-record-btn--recording');
+    btnEl.classList.add('p-record-btn--processing');
+    ringEl?.classList.remove('p-record-ring--active');
+    labelEl.textContent = t('engine.processing');
+    btnEl.disabled = true;
+    listenBtn.disabled = true;
+    setStatusEl(statusEl, '');
+    return;
+  }
+  if (multiState.status === 'processing') return;
+
+  state.engines.tts?.stop?.();
+
+  // Hide the play button from any previous recording.
+  if (playBtn) playBtn.style.display = 'none';
+  multiState.recordingBlob = null;
 
   // Clear any retry hint from a previous failed attempt.
   setStatusEl(statusEl, '');
@@ -1692,6 +1742,7 @@ async function handleMultiRecord(text) {
   const resetForRetry = (message) => {
     multiState.status = 'idle';
     btnEl.classList.remove('p-record-btn--recording');
+    btnEl.classList.remove('p-record-btn--processing');
     ringEl?.classList.remove('p-record-ring--active');
     labelEl.textContent = t('multi.record');
     btnEl.disabled = false;
@@ -1700,6 +1751,7 @@ async function handleMultiRecord(text) {
     // Keep the phrase card fully visible so the player can try again.
     document.getElementById('multi-phrase-card')?.classList.remove('multi-phrase-card--small');
     document.getElementById('multi-score-reveal')?.classList.add('hidden');
+    if (playBtn) playBtn.style.display = multiState.recordingBlob ? '' : 'none';
   };
 
   try {
@@ -1711,12 +1763,14 @@ async function handleMultiRecord(text) {
     });
 
     if (!isValidAssessment(result)) {
+      multiState.recordingBlob = result.recordingBlob ?? null;
       resetForRetry(isAbortedAssessment(result) ? null : describeAssessmentFailure(result));
       return;
     }
 
     multiState.status = 'done';
     multiState.lastResult = result;
+    multiState.recordingBlob = result.recordingBlob ?? null;
 
     // Store score + detailed breakdown
     const score = Math.round(result.pronScore ?? 0);
@@ -1779,6 +1833,7 @@ async function handleMultiRecord(text) {
     }
 
     revealEl.classList.remove('hidden');
+    if (playBtn) playBtn.style.display = multiState.recordingBlob ? '' : 'none';
 
     // Hide phrase card to make room
     document.getElementById('multi-phrase-card')?.classList.add('multi-phrase-card--small');
@@ -1801,6 +1856,8 @@ function isMultiGameOver() {
 }
 
 function advanceMultiTurn() {
+  multiState.recordingBlob = null;
+
   if (isMultiGameOver()) {
     // Show final results
     multiState.phase = 'results';
