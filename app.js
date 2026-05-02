@@ -1510,35 +1510,17 @@ function buildPlayerNameInputs(count) {
   return html;
 }
 
-/** Pick `count` phrases spread across difficulty tiers, randomly within each tier. */
+/** Pick `count` phrases with smoothly ascending difficulty (easy → hard). */
 function pickMultiPhrases(count) {
-  // Group phrases by difficulty tier (1-2, 3-4, 5-6, 7-8, 9-10)
-  const tiers = [[], [], [], [], []];
-  for (const p of MULTIPLAYER_PHRASES) {
-    tiers[Math.floor((p.difficulty - 1) / 2)].push(p);
-  }
-
-  // Shuffle each tier
-  for (const tier of tiers) {
-    for (let i = tier.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [tier[i], tier[j]] = [tier[j], tier[i]];
-    }
-  }
-
-  // Spread picks evenly across tiers, round-robining through them
+  const sorted = [...MULTIPLAYER_PHRASES].sort((a, b) => a.difficulty - b.difficulty);
+  const n = sorted.length;
   const picks = [];
-  const tierIdxs = [0, 0, 0, 0, 0];
-  const nonEmptyTiers = tiers.map((t, i) => t.length > 0 ? i : -1).filter(i => i >= 0);
-
   for (let i = 0; i < count; i++) {
-    const tierPos = i % nonEmptyTiers.length;
-    const t = nonEmptyTiers[tierPos];
-    const idx = tierIdxs[t] % tiers[t].length;
-    picks.push(tiers[t][idx]);
-    tierIdxs[t]++;
+    const start = Math.floor((i * n) / count);
+    const end = Math.floor(((i + 1) * n) / count);
+    const segment = sorted.slice(start, end);
+    picks.push(segment[Math.floor(Math.random() * segment.length)]);
   }
-
   return picks;
 }
 

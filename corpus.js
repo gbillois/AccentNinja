@@ -416,12 +416,12 @@ export const MULTIPLAYER_PHRASES = [
   { text: 'The weather was rather warm this Thursday.',        difficulty: 3 },
   { text: 'His brother and his father went there together.',   difficulty: 3 },
   { text: 'She ships cheap sheep sheets every week.',          difficulty: 3 },
-  { text: 'Pull the wool over the pool fool.',                 difficulty: 4 },
+  { text: 'He stood by the wooden hook and took a good look.',  difficulty: 4 },
   { text: 'The thin man thinks thick thoughts.',               difficulty: 4 },
   { text: 'Thirty-three thirsty thieves thought thoroughly.', difficulty: 4 },
   { text: 'He breathed through his teeth with ease.',          difficulty: 4 },
   { text: 'Which witch watched which watch?',                  difficulty: 4 },
-  { text: 'Bad lads had glad dads in the sand.',               difficulty: 4 },
+  { text: 'She grabbed her black backpack and ran back past the camp.', difficulty: 4 },
 
   // Tier 3 — V/W + R + connected speech (difficulty 5-6)
   { text: 'Very well, the vine and the wine are both fine.',                difficulty: 5 },
