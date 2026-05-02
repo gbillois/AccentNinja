@@ -2030,6 +2030,152 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 
 /* ===========================================================================
+   Tetris Screen
+   =========================================================================== */
+
+.tetris-home-btn {
+  background: linear-gradient(135deg, rgba(160,0,240,0.15) 0%, var(--color-surface) 100%);
+  border-color: #a000f0;
+}
+
+.tetris-body {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--header-height);
+  padding-bottom: env(safe-area-inset-bottom, 8px);
+}
+
+.tetris-wrap {
+  flex: 1;
+  display: flex;
+  gap: 8px;
+  min-height: 0;
+  padding: 8px 8px 0;
+  align-items: flex-start;
+}
+
+.tetris-game-area {
+  position: relative;
+  flex-shrink: 0;
+}
+
+#tetris-canvas {
+  display: block;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+}
+
+.tetris-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+
+.tetris-overlay-box {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  padding: var(--space-6) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  text-align: center;
+}
+
+.tetris-msg {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  max-width: 180px;
+}
+
+.tetris-side {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 75px;
+  max-width: 95px;
+}
+
+.tetris-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tetris-panel-label {
+  font-size: 10px;
+  color: var(--color-text-subtle);
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.tetris-panel-val {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  color: var(--color-text);
+  line-height: 1.2;
+}
+
+#tetris-next-canvas {
+  display: block;
+  border-radius: 4px;
+  background: #0d1117;
+}
+
+.tetris-controls {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+
+.tetris-row {
+  display: flex;
+  gap: 8px;
+}
+
+.t-btn {
+  flex: 1;
+  height: 52px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  color: var(--color-text);
+  font-size: var(--text-xl);
+  font-weight: 700;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background var(--transition-fast), transform var(--transition-fast);
+}
+
+.t-btn:active {
+  background: var(--color-primary-dim);
+  transform: scale(0.93);
+}
+
+.t-drop-btn {
+  background: linear-gradient(135deg, var(--color-primary-dim), var(--color-surface));
+  border-color: var(--color-primary);
+  font-size: var(--text-base);
+}
+
+/* ===========================================================================
    18. Responsive — clamp to max-width on desktop
    =========================================================================== */
 
