@@ -161,6 +161,10 @@ const STRINGS = {
     'multi.playAgain': 'Rejouer',
     'multi.backHome': 'Retour à l\'accueil',
     'multi.difficulty': 'Difficulté croissante',
+    'multi.funMode': 'Mode Fun',
+    'multi.funMode.on': 'Activé',
+    'multi.funMode.off': 'Désactivé',
+    'multi.funMode.hint': 'Virelangues et phrases loufoques !',
   },
 
   en: {
@@ -321,6 +325,10 @@ const STRINGS = {
     'multi.playAgain': 'Play Again',
     'multi.backHome': 'Back to Home',
     'multi.difficulty': 'Increasing difficulty',
+    'multi.funMode': 'Fun Mode',
+    'multi.funMode.on': 'On',
+    'multi.funMode.off': 'Off',
+    'multi.funMode.hint': 'Tongue twisters and silly sentences!',
   },
 };
 
