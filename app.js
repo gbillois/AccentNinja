@@ -377,9 +377,6 @@ function renderHomeScreen() {
           <span class="level0-arrow">&rarr;</span>
         </button>
 
-        <div class="card" style="opacity:0.5">
-          <p class="text-muted text-sm text-center">${t('home.levels.coming5to10')}</p>
-        </div>
       </main>
     </div>
   `;
