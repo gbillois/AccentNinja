@@ -4,9 +4,9 @@
  * Two TTS engines:    WebSpeechTTS | AzureTTS
  * Two assessment engines: AzureAssessmentEngine | WebSpeechAssessmentEngine
  *
- * CRITICAL: Azure assessment uses AudioConfig.fromDefaultMicrophoneInput()
- * (not MediaRecorder) to avoid PCM format issues. A parallel MediaRecorder
- * on a separate getUserMedia() stream captures audio for playback only.
+ * Azure assessment shares the parallel recorder's MediaStream via
+ * AudioConfig.fromStreamInput() to avoid opening a second getUserMedia handle,
+ * which can cause echo-cancellation conflicts on some systems.
  */
 
 // ---------------------------------------------------------------------------
@@ -296,6 +296,8 @@ async function startParallelRecorder() {
       });
     },
     releaseStream() { releaseAll(); },
+    /** The underlying MediaStream (null after releaseStream). */
+    getStream() { return stream; },
     /** Peak RMS observed while recording (0..1). */
     getMaxLevel() { return maxRms; },
     /** Accumulated milliseconds with level above the silence threshold. */
@@ -685,8 +687,8 @@ export class AzureAssessmentEngine {
    * Assess a single utterance against a reference text.
    *
    * Reliability strategy:
-   *   1. First attempt: live mic streaming via fromDefaultMicrophoneInput()
-   *      (low latency, lets Azure handle end-of-speech detection itself).
+   *   1. First attempt: live mic streaming via fromStreamInput(stream)
+   *      (shares the parallel recorder's stream; Azure handles end-of-speech).
    *   2. If the first attempt fails with a transient error (network drop,
    *      service timeout, 5xx, throttling), automatically retry up to twice
    *      using a PushAudioInputStream fed with the PCM that was captured in
@@ -718,8 +720,9 @@ export class AzureAssessmentEngine {
     onStatus('connecting');
 
     // Open the mic early so it's fully initialised by the time the countdown
-    // ends — Azure's fromDefaultMicrophoneInput() will open its own handle
-    // but hardware warm-up happens on the first getUserMedia() call.
+    // ends. We share the same MediaStream with Azure (fromStreamInput) to avoid
+    // a second getUserMedia call, which can trigger echo-cancellation conflicts
+    // on some systems and cause Azure to receive silence.
     const recorder = await startParallelRecorder();
 
     let earlyAbort = false;
@@ -744,9 +747,15 @@ export class AzureAssessmentEngine {
       }
 
       // Attempt 0: live mic streaming.
+      // Share the parallel recorder's stream with Azure to avoid a second
+      // getUserMedia call; fall back to fromDefaultMicrophoneInput if the
+      // stream reference has already been released somehow.
       let liveAudioConfig;
       try {
-        liveAudioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
+        const s = recorder.getStream();
+        liveAudioConfig = s
+          ? SpeechSDK.AudioConfig.fromStreamInput(s)
+          : SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
       } catch (err) {
         recordingBlob = await recorder.stop();
         throw makeAssessmentError(
@@ -764,6 +773,15 @@ export class AzureAssessmentEngine {
       recordingBlob = await recorder.stop();
 
       if (earlyAbort) {
+        // If the user pressed Stop after actually speaking, try to score the
+        // captured PCM so they get a result instead of a silent abort.
+        const pcm = recorder.getPCMBuffer16k();
+        if (pcm && pcm.length >= 16000 * 0.3 && !recorder.isSilent()) {
+          const r = await this._tryBufferedRecognition(referenceText, pcm);
+          if (r.parsed && Number(r.parsed.pronScore) > 0) {
+            return { ...r.parsed, recordingBlob };
+          }
+        }
         return { ...emptyAzureResult(), raw: { error: ASSESSMENT_ERROR.ABORTED }, recordingBlob };
       }
 
