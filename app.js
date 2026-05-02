@@ -326,16 +326,6 @@ function renderHomeScreen() {
     <div class="screen-body">
       <main class="home-main">
 
-        <!-- Level 0 — sandbox -->
-        <button class="level0-card" id="level0-btn">
-          <span class="level0-icon">🎯</span>
-          <div class="level0-text">
-            <span class="level0-title">Niveau 0 — Bac à sable</span>
-            <span class="level0-sub">Testez n'importe quelle phrase</span>
-          </div>
-          <span class="level0-arrow">→</span>
-        </button>
-
         <div>
           <p class="home-section-title">${t('home.title')}</p>
         </div>
@@ -375,6 +365,16 @@ function renderHomeScreen() {
             <span class="multi-home-sub">${t('multi.btn.sub')}</span>
           </div>
           <span class="level0-arrow">&rarr;</span>
+        </button>
+
+        <!-- Sandbox button -->
+        <button class="level0-card" id="level0-btn">
+          <span class="level0-icon">🎯</span>
+          <div class="level0-text">
+            <span class="level0-title">Bac à sable</span>
+            <span class="level0-sub">Testez n'importe quelle phrase</span>
+          </div>
+          <span class="level0-arrow">→</span>
         </button>
 
       </main>
