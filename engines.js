@@ -16,7 +16,10 @@
 function getSpeechSDK() {
   const sdk = window.SpeechSDK;
   if (!sdk) {
-    throw new Error('Azure Speech SDK not loaded. Check your internet connection.');
+    throw makeAssessmentError(
+      ASSESSMENT_ERROR.SDK_NOT_LOADED,
+      'Azure Speech SDK not loaded. Check your internet connection.',
+    );
   }
   return sdk;
 }
@@ -73,6 +76,41 @@ const MIN_SPEECH_DURATION_MS = 250;
 /** Per-step duration of the 3-2-1 warm-up countdown (ms). */
 const COUNTDOWN_STEP_MS = 400;
 
+// ---------------------------------------------------------------------------
+// Retry configuration
+//
+// Azure pronunciation assessment is reliable on the happy path but the
+// underlying WebSocket can drop, the service can hiccup (5xx), or the free
+// tier can rate-limit (429). Without retry we fail outright in 20–30 % of
+// real-world recordings. With buffered PCM replay (see
+// AzureAssessmentEngine.assess) we can retry the same audio without forcing
+// the user to record again.
+// ---------------------------------------------------------------------------
+
+/** Per-attempt backoff delays (ms). Length = number of retries we attempt. */
+const RETRY_BACKOFFS_MS = [1000, 2500];
+
+/** Minimum backoff used when Azure tells us we're rate-limited (HTTP 429). */
+const RATE_LIMIT_BACKOFF_MS = 5000;
+
+/** Timeout for the live (first) recognition pass. */
+const RECOGNIZE_TIMEOUT_MS = 30000;
+
+/** Timeout for retries. Buffered PCM is processed faster than live audio. */
+const RETRY_TIMEOUT_MS = 25000;
+
+/** Empty AssessmentResult shape used for early-aborts and total failures. */
+function emptyAzureResult() {
+  return {
+    engine: 'azure',
+    pronScore: 0, accuracyScore: 0, fluencyScore: 0, completenessScore: 0,
+    prosodyScore: null,
+    recognizedText: '',
+    words: [],
+    raw: {},
+  };
+}
+
 /**
  * Run a 3-2-1 countdown, emitting status events for the UI to display.
  * Used by both assessment engines to give the mic time to initialise before
@@ -100,11 +138,17 @@ async function startParallelRecorder() {
   let analyser = null;
   let source = null;
   let sampleBuf = null;
+  let scriptNode = null;
+  let muteGain  = null;
   let pollTimer = null;
   let maxRms = 0;
   let speechMs = 0;
   let lastSampleAt = 0;
+  let inputSampleRate = 0;
   const chunks = [];
+  // Float32 PCM buffer collected from the AudioContext, used to retry Azure
+  // recognition without forcing the user to record again.
+  const pcmChunks = [];
 
   try {
     stream = await navigator.mediaDevices.getUserMedia({
@@ -136,6 +180,7 @@ async function startParallelRecorder() {
       if (audioCtx.state === 'suspended') {
         try { await audioCtx.resume(); } catch { /* ignore */ }
       }
+      inputSampleRate = audioCtx.sampleRate || 0;
       source   = audioCtx.createMediaStreamSource(stream);
       analyser = audioCtx.createAnalyser();
       // Small FFT — we only need time-domain RMS, not frequency bins.
@@ -143,6 +188,28 @@ async function startParallelRecorder() {
       analyser.smoothingTimeConstant = 0.3;
       source.connect(analyser);
       sampleBuf = new Uint8Array(analyser.fftSize);
+
+      // PCM capture for retries.
+      // ScriptProcessorNode is deprecated but works everywhere we support and
+      // doesn't require the AudioWorklet ceremony (Blob URL + addModule).
+      // We connect through a muted gain node so the user doesn't hear themselves.
+      try {
+        scriptNode = audioCtx.createScriptProcessor(4096, 1, 1);
+        scriptNode.onaudioprocess = (event) => {
+          const ch = event.inputBuffer.getChannelData(0);
+          // Copy: the underlying buffer is reused across callbacks.
+          pcmChunks.push(new Float32Array(ch));
+        };
+        muteGain = audioCtx.createGain();
+        muteGain.gain.value = 0;
+        source.connect(scriptNode);
+        scriptNode.connect(muteGain);
+        muteGain.connect(audioCtx.destination);
+      } catch (err) {
+        console.warn('[AccentNinja] PCM capture unavailable; retries will be limited:', err);
+        scriptNode = null;
+        muteGain = null;
+      }
     }
   } catch (err) {
     if (stream) stream.getTracks().forEach(t => { try { t.stop(); } catch { /* ignore */ } });
@@ -177,6 +244,11 @@ async function startParallelRecorder() {
     // Explicitly disconnect the source graph before closing the context — this
     // releases the MediaStreamSourceNode's reference to the stopped stream
     // without waiting on GC.
+    if (scriptNode) {
+      try { scriptNode.disconnect(); } catch { /* ignore */ }
+      scriptNode.onaudioprocess = null;
+    }
+    if (muteGain) { try { muteGain.disconnect(); } catch { /* ignore */ } }
     if (source) { try { source.disconnect(); } catch { /* ignore */ } }
     if (stream) stream.getTracks().forEach(t => { try { t.stop(); } catch { /* ignore */ } });
     if (audioCtx) { try { audioCtx.close(); } catch { /* ignore */ } }
@@ -185,6 +257,10 @@ async function startParallelRecorder() {
     source = null;
     stream = null;
     sampleBuf = null;
+    scriptNode = null;
+    muteGain   = null;
+    // pcmChunks intentionally retained — callers may need to replay the
+    // captured audio after stop() (e.g. to retry a failed recognition).
   }
 
   return {
@@ -228,6 +304,20 @@ async function startParallelRecorder() {
     isSilent() {
       return maxRms < SILENCE_RMS_THRESHOLD || speechMs < MIN_SPEECH_DURATION_MS;
     },
+    /**
+     * Return the captured audio as a 16 kHz / 16-bit / mono Int16Array suitable
+     * for feeding into Azure's PushAudioInputStream, or null if PCM capture
+     * was unavailable or no audio was captured.
+     */
+    getPCMBuffer16k() {
+      if (pcmChunks.length === 0 || !inputSampleRate) return null;
+      const totalIn = pcmChunks.reduce((s, c) => s + c.length, 0);
+      if (totalIn === 0) return null;
+      const concat = new Float32Array(totalIn);
+      let off = 0;
+      for (const c of pcmChunks) { concat.set(c, off); off += c.length; }
+      return downsampleToInt16PCM(concat, inputSampleRate, 16000);
+    },
   };
 }
 
@@ -236,25 +326,104 @@ async function startParallelRecorder() {
  * failures. These MUST match the strings the UI checks in app.js.
  */
 export const ASSESSMENT_ERROR = {
-  SILENT_AUDIO: 'SilentAudio',
-  NO_MATCH:     'NoMatch',
-  NO_MIC:       'NoMic',
-  TIMEOUT:      'Timeout',
-  ABORTED:      'Aborted',
-  NETWORK:      'Network',
-  UNKNOWN:      'Unknown',
+  SILENT_AUDIO:   'SilentAudio',
+  NO_MATCH:       'NoMatch',
+  NO_MIC:         'NoMic',
+  TIMEOUT:        'Timeout',
+  ABORTED:        'Aborted',
+  NETWORK:        'Network',
+  AUTH:           'Auth',
+  RATE_LIMITED:   'RateLimited',
+  SERVICE:        'Service',
+  SDK_NOT_LOADED: 'SdkNotLoaded',
+  UNKNOWN:        'Unknown',
 };
 
 /**
+ * Decide whether a given Azure failure (parsed result + sdk-level error)
+ * should trigger an automatic retry, and with what backoff strategy.
+ * Returns null on success, or { code, retryable, longBackoff, detail }.
+ */
+function classifyAzureFailure(parsed, error) {
+  // SDK-level errors (very rare — usually thrown before a result is returned)
+  if (error) {
+    const code = error.code || ASSESSMENT_ERROR.UNKNOWN;
+    const retryable = code !== ASSESSMENT_ERROR.AUTH
+                   && code !== ASSESSMENT_ERROR.SDK_NOT_LOADED
+                   && code !== ASSESSMENT_ERROR.NO_MIC;
+    return { code, retryable, longBackoff: false, detail: error.message || '' };
+  }
+  if (!parsed) {
+    return { code: ASSESSMENT_ERROR.UNKNOWN, retryable: true, longBackoff: false, detail: '' };
+  }
+  // Successful score → no failure to classify
+  if (Number(parsed.pronScore) > 0) return null;
+
+  const rawErr = parsed.raw?.error;
+  const detail = parsed.raw?.errorDetail || '';
+  switch (rawErr) {
+    case ASSESSMENT_ERROR.AUTH:
+    case ASSESSMENT_ERROR.SDK_NOT_LOADED:
+    case ASSESSMENT_ERROR.NO_MIC:
+    case ASSESSMENT_ERROR.SILENT_AUDIO:
+    case ASSESSMENT_ERROR.NO_MATCH:
+    case ASSESSMENT_ERROR.ABORTED:
+      // Audio/auth/setup issues — replay won't help.
+      return { code: rawErr, retryable: false, longBackoff: false, detail };
+    case ASSESSMENT_ERROR.RATE_LIMITED:
+      return { code: rawErr, retryable: true, longBackoff: true, detail };
+    case ASSESSMENT_ERROR.NETWORK:
+    case ASSESSMENT_ERROR.SERVICE:
+    case ASSESSMENT_ERROR.TIMEOUT:
+      return { code: rawErr, retryable: true, longBackoff: false, detail };
+    default:
+      return { code: rawErr || ASSESSMENT_ERROR.UNKNOWN, retryable: true, longBackoff: false, detail };
+  }
+}
+
+/**
+ * Convert a Float32 mono buffer at `inRate` Hz to 16-bit PCM at `outRate` Hz.
+ * Used to feed the Azure SDK's PushAudioInputStream during retries.
+ */
+function downsampleToInt16PCM(input, inRate, outRate) {
+  let resampled;
+  if (inRate === outRate) {
+    resampled = input;
+  } else {
+    const ratio = inRate / outRate;
+    const outLen = Math.floor(input.length / ratio);
+    resampled = new Float32Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      const srcIdx = i * ratio;
+      const idx0 = Math.floor(srcIdx);
+      const idx1 = Math.min(idx0 + 1, input.length - 1);
+      const frac = srcIdx - idx0;
+      resampled[i] = input[idx0] * (1 - frac) + input[idx1] * frac;
+    }
+  }
+  const out = new Int16Array(resampled.length);
+  for (let i = 0; i < resampled.length; i++) {
+    const s = Math.max(-1, Math.min(1, resampled[i]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  return out;
+}
+
+/**
  * Build the shared `{ raw: { error } }` tag for a zero-score result based on
- * the recorder's silence telemetry.
+ * the recorder's silence telemetry. Specific error codes already set by
+ * parseAzureResult (AUTH, NETWORK, SERVICE, etc.) are more informative than
+ * the silence heuristic and are kept as-is.
  */
 function tagFailureFromRecorder(result, recorder, recognizedText = '') {
   if (result.pronScore > 0) return;
+  const existing = result.raw?.error;
+  const isSpecificError = existing && existing !== ASSESSMENT_ERROR.NO_MATCH;
+  if (isSpecificError) return;
   const code = recorder.isSilent()
     ? ASSESSMENT_ERROR.SILENT_AUDIO
     : recognizedText
-      ? (result.raw?.error || ASSESSMENT_ERROR.NO_MATCH)
+      ? (existing || ASSESSMENT_ERROR.NO_MATCH)
       : ASSESSMENT_ERROR.NO_MATCH;
   result.raw = { ...(result.raw || {}), error: code };
 }
@@ -462,6 +631,7 @@ export class AzureAssessmentEngine {
   constructor(settings) {
     this.settings = settings;
     this._stopFn = null;
+    this._activeRecognizer = null;
   }
 
   stop() {
@@ -513,17 +683,37 @@ export class AzureAssessmentEngine {
 
   /**
    * Assess a single utterance against a reference text.
+   *
+   * Reliability strategy:
+   *   1. First attempt: live mic streaming via fromDefaultMicrophoneInput()
+   *      (low latency, lets Azure handle end-of-speech detection itself).
+   *   2. If the first attempt fails with a transient error (network drop,
+   *      service timeout, 5xx, throttling), automatically retry up to twice
+   *      using a PushAudioInputStream fed with the PCM that was captured in
+   *      parallel — so the user does NOT have to record again.
+   *   3. Stop on terminal errors (auth failure, no mic, silent audio, etc.)
+   *      since replaying won't help.
+   *
    * @param {string} referenceText
-   * @param {(status: string) => void} onStatus - Called with status keys:
-   *   'connecting' | 'countdown-3' | 'countdown-2' | 'countdown-1' | 'recording'
+   * @param {(status: string, info?: object) => void} onStatus - Called with
+   *   status keys: 'connecting' | 'countdown-3' | 'countdown-2' | 'countdown-1'
+   *   | 'recording' | 'retrying-1' | 'retrying-2'
    * @returns {Promise<AssessmentResult>}
    */
   async assess(referenceText, onStatus = () => {}) {
-    const SpeechSDK = getSpeechSDK();
-
     if (!this.settings.azureApiKey) {
-      throw new Error('Azure API key required');
+      throw makeAssessmentError(
+        ASSESSMENT_ERROR.AUTH,
+        'Azure API key required.',
+      );
     }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      throw makeAssessmentError(
+        ASSESSMENT_ERROR.NETWORK,
+        'You appear to be offline. Azure pronunciation assessment requires an internet connection.',
+      );
+    }
+    const SpeechSDK = getSpeechSDK();
 
     onStatus('connecting');
 
@@ -535,66 +725,214 @@ export class AzureAssessmentEngine {
     let earlyAbort = false;
     this._stopFn = () => {
       earlyAbort = true;
+      const rec = this._activeRecognizer;
+      if (rec) {
+        try { rec.close(); } catch { /* ignore */ }
+        this._activeRecognizer = null;
+      }
       try { recorder.releaseStream(); } catch { /* ignore */ }
     };
 
-    let recognizer;
+    let recordingBlob = null;
     try {
       recorder.start();
       await runCountdown(onStatus, () => earlyAbort);
 
       if (earlyAbort) {
-        this._stopFn = null;
-        return { engine: 'azure', pronScore: 0, accuracyScore: 0, fluencyScore: 0, completenessScore: 0, prosodyScore: null, recognizedText: '', words: [], raw: {}, recordingBlob: null };
+        recordingBlob = await recorder.stop();
+        return { ...emptyAzureResult(), recordingBlob };
       }
 
-      const speechConfig = this._buildSpeechConfig();
-      const pronConfig = this._buildPronConfig(referenceText);
-      const audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
-      recognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);
+      // Attempt 0: live mic streaming.
+      let liveAudioConfig;
+      try {
+        liveAudioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
+      } catch (err) {
+        recordingBlob = await recorder.stop();
+        throw makeAssessmentError(
+          ASSESSMENT_ERROR.NO_MIC,
+          `Failed to open microphone for Azure SDK: ${err?.message || err}`,
+        );
+      }
+      let { parsed, error } = await this._recognizeOnce(
+        referenceText, liveAudioConfig, RECOGNIZE_TIMEOUT_MS,
+        { onStart: () => onStatus('recording') },
+      );
+
+      // Stop the parallel recorder NOW so the PCM buffer + replay blob are
+      // finalised before we decide whether to retry.
+      recordingBlob = await recorder.stop();
+
+      if (earlyAbort) {
+        return { ...emptyAzureResult(), recordingBlob };
+      }
+
+      // Happy path
+      if (parsed && Number(parsed.pronScore) > 0) {
+        return { ...parsed, recordingBlob };
+      }
+
+      // Decide whether to retry
+      let info = classifyAzureFailure(parsed, error);
+      const pcm = recorder.getPCMBuffer16k();
+      const haveReplayableAudio = pcm && pcm.length >= 16000 * 0.3; // ≥0.3s
+
+      if (info?.retryable && haveReplayableAudio) {
+        for (let attempt = 0; attempt < RETRY_BACKOFFS_MS.length; attempt++) {
+          if (earlyAbort) break;
+          const baseDelay = RETRY_BACKOFFS_MS[attempt];
+          const delay = info?.longBackoff
+            ? Math.max(baseDelay, RATE_LIMIT_BACKOFF_MS)
+            : baseDelay;
+
+          onStatus(`retrying-${attempt + 1}`, {
+            attempt: attempt + 1,
+            total:   RETRY_BACKOFFS_MS.length,
+            reason:  info?.code,
+            detail:  info?.detail,
+          });
+          console.warn(
+            `[AccentNinja] Azure assessment failed (code=${info?.code}, detail=${info?.detail || 'n/a'}). ` +
+            `Retrying with buffered PCM in ${delay}ms (attempt ${attempt + 1}/${RETRY_BACKOFFS_MS.length}).`
+          );
+          await sleep(delay);
+          if (earlyAbort) break;
+
+          const r = await this._tryBufferedRecognition(referenceText, pcm);
+          if (r.parsed && Number(r.parsed.pronScore) > 0) {
+            return { ...r.parsed, recordingBlob };
+          }
+          // Update the rolling "best/last" parsed + error for the final fallback path.
+          if (r.parsed) parsed = r.parsed;
+          if (r.error)  error  = r.error;
+          info = classifyAzureFailure(parsed, error);
+          if (!info?.retryable) break;
+        }
+      } else if (info?.retryable && !haveReplayableAudio) {
+        console.warn(
+          '[AccentNinja] Azure failed with a retryable error but the PCM buffer is empty/too short — skipping retry.'
+        );
+      }
+
+      // All attempts exhausted — return the most informative failure we have.
+      const finalParsed = parsed || emptyAzureResult();
+      tagFailureFromRecorder(finalParsed, recorder, finalParsed.recognizedText);
+      // Promote the SDK-level error code into raw.error if no reason is set yet.
+      if (error?.code && !finalParsed.raw?.error) {
+        finalParsed.raw = {
+          ...(finalParsed.raw || {}),
+          error: error.code,
+          errorDetail: error.message || finalParsed.raw?.errorDetail || '',
+        };
+      }
+      return { ...finalParsed, recordingBlob };
+    } catch (err) {
+      // Make sure the recorder is released even on hard failure.
+      if (recordingBlob === null) {
+        try { recordingBlob = await recorder.stop(); } catch { /* ignore */ }
+      }
+      throw err;
+    } finally {
+      this._stopFn = null;
+      this._activeRecognizer = null;
+    }
+  }
+
+  /**
+   * Run a single recognition pass with a given AudioConfig + timeout.
+   * Returns { parsed, error }: `parsed` is the normalised AssessmentResult
+   * (may have pronScore=0 with raw.error), `error` is set only for SDK-level
+   * failures that prevented us from getting any result at all.
+   */
+  async _recognizeOnce(referenceText, audioConfig, timeoutMs, opts = {}) {
+    const SpeechSDK = getSpeechSDK();
+    let speechConfig;
+    let pronConfig;
+    let recognizer;
+    try {
+      speechConfig = this._buildSpeechConfig();
+      pronConfig   = this._buildPronConfig(referenceText);
+      recognizer   = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);
       pronConfig.applyTo(recognizer);
     } catch (err) {
-      this._stopFn = null;
-      try { recorder.releaseStream(); } catch { /* ignore */ }
-      throw err;
+      return {
+        parsed: null,
+        error: makeAssessmentError(
+          ASSESSMENT_ERROR.UNKNOWN,
+          `Failed to build Azure recognizer: ${err?.message || err}`,
+        ),
+      };
     }
+    this._activeRecognizer = recognizer;
 
-    return new Promise((resolve, reject) => {
-      const TIMEOUT_MS = 30000;
-      let timeoutId = null;
-      let settled = false;
+    if (opts.onStart) recognizer.sessionStarted = opts.onStart;
 
-      const finish = async (result, error) => {
-        if (settled) return;
-        settled = true;
-        this._stopFn = null;
-        if (timeoutId) clearTimeout(timeoutId);
-        try { recognizer.close(); } catch { /* ignore */ }
-        const recordingBlob = await recorder.stop();
-        if (error) { reject(error); return; }
-        const parsed = result
-          ? parseAzureResult(result, SpeechSDK)
-          : { engine: 'azure', pronScore: 0, accuracyScore: 0, fluencyScore: 0, completenessScore: 0, prosodyScore: null, recognizedText: '', words: [], raw: {} };
-        tagFailureFromRecorder(parsed, recorder, parsed.recognizedText);
-        resolve({ ...parsed, recordingBlob });
+    try {
+      return await new Promise(resolve => {
+        let settled = false;
+        const finish = (parsed, error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve({ parsed, error });
+        };
+        const timer = setTimeout(() => {
+          finish(null, makeAssessmentError(
+            ASSESSMENT_ERROR.TIMEOUT,
+            `Azure recognition timed out after ${Math.round(timeoutMs / 1000)}s.`,
+          ));
+        }, timeoutMs);
+        try {
+          recognizer.recognizeOnceAsync(
+            result => finish(parseAzureResult(result, SpeechSDK), null),
+            err    => finish(null, makeAssessmentError(
+              ASSESSMENT_ERROR.UNKNOWN,
+              `Azure SDK recognition error: ${err}`,
+            )),
+          );
+        } catch (e) {
+          finish(null, makeAssessmentError(
+            ASSESSMENT_ERROR.UNKNOWN,
+            `Azure recognizer threw: ${e?.message || e}`,
+          ));
+        }
+      });
+    } finally {
+      try { recognizer.close(); } catch { /* ignore */ }
+      if (this._activeRecognizer === recognizer) {
+        this._activeRecognizer = null;
+      }
+    }
+  }
+
+  /**
+   * Retry a recognition by feeding pre-recorded PCM via PushAudioInputStream.
+   * Used after a transient live-mic failure so the user doesn't have to
+   * speak again.
+   */
+  async _tryBufferedRecognition(referenceText, pcm) {
+    const SpeechSDK = getSpeechSDK();
+    let pushStream;
+    let audioConfig;
+    try {
+      const format = SpeechSDK.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1);
+      pushStream = SpeechSDK.AudioInputStream.createPushStream(format);
+      const ab = pcm.byteOffset === 0 && pcm.byteLength === pcm.buffer.byteLength
+        ? pcm.buffer
+        : pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength);
+      pushStream.write(ab);
+      pushStream.close();
+      audioConfig = SpeechSDK.AudioConfig.fromStreamInput(pushStream);
+    } catch (err) {
+      return {
+        parsed: null,
+        error: makeAssessmentError(
+          ASSESSMENT_ERROR.UNKNOWN,
+          `Failed to build PushStream for retry: ${err?.message || err}`,
+        ),
       };
-
-      this._stopFn = () => {
-        try { recognizer.close(); } catch { /* ignore */ }
-        finish(null, null);
-      };
-
-      recognizer.sessionStarted = () => onStatus('recording');
-
-      timeoutId = setTimeout(() => {
-        finish(null, makeAssessmentError(ASSESSMENT_ERROR.TIMEOUT, 'Assessment timed out after 30s'));
-      }, TIMEOUT_MS);
-
-      recognizer.recognizeOnceAsync(
-        result => finish(result, null),
-        err  => finish(null, makeAssessmentError(ASSESSMENT_ERROR.UNKNOWN, `Azure recognition failed: ${err}`))
-      );
-    });
+    }
+    return this._recognizeOnce(referenceText, audioConfig, RETRY_TIMEOUT_MS);
   }
 
   /**
@@ -753,24 +1091,90 @@ export class WebSpeechAssessmentEngine {
 // Azure result parser
 // ===========================================================================
 
+/**
+ * Map a CancellationErrorCode (numeric enum) coming from the Azure SDK to a
+ * user-facing ASSESSMENT_ERROR code. Returning a specific code lets the UI
+ * show "auth failed" / "service down" / "rate limited" instead of a generic
+ * "recording not valid" message.
+ */
+function mapCancellationErrorCode(errorCode, SpeechSDK) {
+  const EC = SpeechSDK.CancellationErrorCode;
+  if (!EC) return ASSESSMENT_ERROR.UNKNOWN;
+  switch (errorCode) {
+    case EC.NoError:                   return ASSESSMENT_ERROR.UNKNOWN;
+    case EC.AuthenticationFailure:
+    case EC.Forbidden:                 return ASSESSMENT_ERROR.AUTH;
+    case EC.ConnectionFailure:         return ASSESSMENT_ERROR.NETWORK;
+    case EC.TooManyRequests:           return ASSESSMENT_ERROR.RATE_LIMITED;
+    case EC.ServiceTimeout:            return ASSESSMENT_ERROR.TIMEOUT;
+    case EC.ServiceError:
+    case EC.ServiceUnavailable:
+    case EC.RuntimeError:              return ASSESSMENT_ERROR.SERVICE;
+    case EC.BadRequestParameters:      return ASSESSMENT_ERROR.UNKNOWN;
+    default:                           return ASSESSMENT_ERROR.UNKNOWN;
+  }
+}
+
+/**
+ * Parse a Canceled result into our normalised AssessmentResult shape.
+ * Reads CancellationDetails for a specific error code + human-readable detail.
+ */
+function parseAzureCanceledResult(result, SpeechSDK) {
+  let code = ASSESSMENT_ERROR.UNKNOWN;
+  let detail = '';
+  try {
+    const cd = SpeechSDK.CancellationDetails.fromResult(result);
+    detail = cd.errorDetails || '';
+    if (cd.reason === SpeechSDK.CancellationReason.EndOfStream) {
+      // EndOfStream with no recognised speech = effectively NoMatch for our UX.
+      code = ASSESSMENT_ERROR.NO_MATCH;
+    } else {
+      code = mapCancellationErrorCode(cd.errorCode, SpeechSDK);
+    }
+  } catch (e) {
+    detail = `CancellationDetails parse failed: ${e?.message || e}`;
+  }
+  return {
+    engine: 'azure',
+    pronScore: 0, accuracyScore: 0, fluencyScore: 0, completenessScore: 0, prosodyScore: null,
+    recognizedText: '',
+    words: [],
+    raw: { error: code, errorDetail: detail },
+  };
+}
+
 function parseAzureResult(result, SpeechSDK) {
-  if (result.reason === SpeechSDK.ResultReason.NoMatch) {
+  const ResultReason = SpeechSDK.ResultReason;
+
+  if (result.reason === ResultReason.NoMatch) {
+    let detail = '';
+    try {
+      const nmd = SpeechSDK.NoMatchDetails?.fromResult?.(result);
+      if (nmd) detail = `NoMatchReason=${nmd.reason}`;
+    } catch { /* ignore */ }
     return {
       engine: 'azure',
       pronScore: 0, accuracyScore: 0, fluencyScore: 0, completenessScore: 0, prosodyScore: null,
       recognizedText: '',
       words: [],
-      raw: { error: 'NoMatch' },
+      raw: { error: ASSESSMENT_ERROR.NO_MATCH, errorDetail: detail },
     };
   }
 
-  if (result.reason !== SpeechSDK.ResultReason.RecognizedSpeech) {
+  if (result.reason === ResultReason.Canceled) {
+    return parseAzureCanceledResult(result, SpeechSDK);
+  }
+
+  if (result.reason !== ResultReason.RecognizedSpeech) {
     return {
       engine: 'azure',
       pronScore: 0, accuracyScore: 0, fluencyScore: 0, completenessScore: 0, prosodyScore: null,
       recognizedText: '',
       words: [],
-      raw: { error: `Reason: ${result.reason}` },
+      raw: {
+        error: ASSESSMENT_ERROR.UNKNOWN,
+        errorDetail: `Unexpected ResultReason=${result.reason}`,
+      },
     };
   }
 

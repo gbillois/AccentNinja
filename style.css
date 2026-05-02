@@ -1125,6 +1125,15 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .p-status--error { color: var(--color-error); }
 .p-status--warn  { color: var(--color-warning); }
+.p-status--retrying {
+  color: var(--color-warning);
+  font-weight: 600;
+  animation: retryPulse 1.5s ease-in-out infinite;
+}
+@keyframes retryPulse {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
+}
 .p-status--countdown {
   font-size: var(--text-4xl);
   font-weight: 800;

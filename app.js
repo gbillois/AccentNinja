@@ -607,28 +607,59 @@ function isValidAssessment(result) {
 /** Map an error code (from the engine or a raw.error tag) to a user message. */
 function messageForErrorCode(code) {
   switch (code) {
-    case 'SilentAudio': return t('error.silentAudio');
-    case 'NoMatch':     return t('error.noMatch');
-    case 'NoMic':       return t('error.noMic');
-    case 'Timeout':     return t('error.timeout');
-    case 'Network':     return t('error.networkError');
-    case 'Aborted':     return t('error.recordFailed');
-    default:            return t('error.recordFailed');
+    case 'SilentAudio':  return t('error.silentAudio');
+    case 'NoMatch':      return t('error.noMatch');
+    case 'NoMic':        return t('error.noMic');
+    case 'Timeout':      return t('error.timeout');
+    case 'Network':      return t('error.networkError');
+    case 'Aborted':      return t('error.recordFailed');
+    case 'Auth':         return t('error.auth');
+    case 'RateLimited':  return t('error.rateLimited');
+    case 'Service':      return t('error.service');
+    case 'SdkNotLoaded': return t('error.sdkNotLoaded');
+    case 'Unknown':      return t('error.unknown');
+    default:             return t('error.recordFailed');
   }
 }
 
+/**
+ * Append a short technical detail (errorDetails from the SDK / message from
+ * a thrown Error) to a user-facing error message. Helps the user (and us)
+ * diagnose recurring failures instead of always seeing the generic toast.
+ */
+function appendErrorDetail(baseMessage, code, detail) {
+  if (!detail) return baseMessage;
+  // Don't expose details for benign/self-explanatory codes.
+  if (code === 'SilentAudio' || code === 'NoMic' || code === 'NoMatch') {
+    return baseMessage;
+  }
+  // Truncate verbose Azure errors that include the entire URL/headers.
+  const trimmed = String(detail).replace(/\s+/g, ' ').trim();
+  const short = trimmed.length > 140 ? trimmed.slice(0, 137) + '…' : trimmed;
+  return `${baseMessage} (${t('error.detail')}: ${short})`;
+}
+
 function describeAssessmentFailure(result) {
-  return messageForErrorCode(result?.raw?.error);
+  const code   = result?.raw?.error;
+  const detail = result?.raw?.errorDetail;
+  if (code && code !== 'SilentAudio' && code !== 'NoMatch' && code !== 'NoMic') {
+    console.warn('[AccentNinja] Assessment failure:', { code, detail, result });
+  }
+  return appendErrorDetail(messageForErrorCode(code), code, detail);
 }
 
 function describeAssessmentError(err) {
-  if (err?.code) return messageForErrorCode(err.code);
+  if (err?.code) {
+    console.warn('[AccentNinja] Assessment error:', { code: err.code, message: err.message });
+    return appendErrorDetail(messageForErrorCode(err.code), err.code, err.message);
+  }
   // getUserMedia rejections from startParallelRecorder are plain Errors
   // without a code field — detect them by message.
   if (/access denied|permission|NotAllowed/i.test(err?.message || '')) {
     return t('error.noMic');
   }
-  return `${t('error.unknown')}: ${err?.message || err}`;
+  console.warn('[AccentNinja] Assessment error (uncoded):', err);
+  return `${t('error.unknown')} (${t('error.detail')}: ${err?.message || err})`;
 }
 
 /**
@@ -652,8 +683,20 @@ function applyAssessmentStatus(setter, status) {
     case 'recording':
       setter(t('engine.recording'));
       break;
-    default:
+    default: {
+      // Retry status: 'retrying-1' / 'retrying-2'
+      const m = typeof status === 'string' && status.match(/^retrying-(\d+)$/);
+      if (m) {
+        const attempt = m[1];
+        // Total = number of retry attempts configured in engines.js (currently 2).
+        const total = '2';
+        const msg = t('engine.retrying')
+          .replace('{attempt}', attempt)
+          .replace('{total}', total);
+        setter(msg, 'retrying');
+      }
       break;
+    }
   }
 }
 
