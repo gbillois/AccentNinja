@@ -43,6 +43,7 @@
     .muted { color: #6b7280; font-size: .92rem; }
     .small-actions { margin-top: .75rem; display: flex; gap: .5rem; flex-wrap: wrap; }
     .small-actions button { width: auto; min-width: 0; }
+    .live-transcript { background: #f8fafc; color: #0f172a; border: 1px solid #dbeafe; min-height: 70px; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/microsoft-cognitiveservices-speech-sdk@latest/distrib/browser/microsoft.cognitiveservices.speech.sdk.bundle-min.js"></script>
 </head>
@@ -104,6 +105,12 @@
       <span id="spinner" class="spinner" aria-hidden="true"></span>
       <p id="status" class="status">Idle</p>
     </div>
+
+    <label for="liveTranscriptLocale">Live transcription locale (phone/browser native)</label>
+    <input id="liveTranscriptLocale" type="text" value="fr-FR" placeholder="e.g. fr-FR" />
+    <p class="muted">Uses the device/browser speech recognition when available (no external API call from this page).</p>
+    <h3>Live transcription</h3>
+    <pre id="liveTranscript" class="live-transcript">(inactive)</pre>
   </div>
 
   <div class="card">
@@ -120,11 +127,13 @@
 
   <script>
     const $ = (id) => document.getElementById(id);
-    const fieldsToPersist = ["speechRegion", "locale", "referenceText", "gradingSystem", "granularity", "speechKey"];
+    const fieldsToPersist = ["speechRegion", "locale", "referenceText", "gradingSystem", "granularity", "speechKey", "liveTranscriptLocale"];
     let activeRecognizer = null;
     let sessionGuardTimer = null;
     let isStopping = false;
     let latestRecognizedText = "";
+    let deviceSpeechRecognizer = null;
+    let liveTranscriptFinalText = "";
     const savedKeyStorageKey = "accentninja_speech_key_v1";
 
     function loadSavedValues() {
@@ -271,9 +280,11 @@
     function resetUiForStart() {
       isStopping = false;
       latestRecognizedText = "";
+      liveTranscriptFinalText = "";
       $("startBtn").disabled = true;
       $("stopBtn").disabled = false;
       $("recognizedText").textContent = "(waiting...)";
+      $("liveTranscript").textContent = "(listening...)";
       $("rawJson").textContent = "(waiting...)";
       $("scores").innerHTML = "";
       drawScoreChart([]);
@@ -288,7 +299,79 @@
       $("stopBtn").disabled = true;
       setBusy(false);
       activeRecognizer = null;
+      stopDeviceLiveTranscript();
       isStopping = false;
+    }
+
+    function updateLiveTranscriptPreview(partialText = "") {
+      const finalPart = liveTranscriptFinalText.trim();
+      const partialPart = partialText.trim();
+      if (!finalPart && !partialPart) {
+        $("liveTranscript").textContent = "(listening...)";
+        return;
+      }
+      const composed = [finalPart, partialPart].filter(Boolean).join(" ");
+      $("liveTranscript").textContent = composed;
+    }
+
+    function startDeviceLiveTranscript() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        $("liveTranscript").textContent = "Live transcription unavailable on this browser.";
+        return;
+      }
+
+      stopDeviceLiveTranscript();
+      const recognizer = new SpeechRecognition();
+      deviceSpeechRecognizer = recognizer;
+      recognizer.lang = $("liveTranscriptLocale").value.trim() || $("locale").value.trim() || "fr-FR";
+      recognizer.continuous = true;
+      recognizer.interimResults = true;
+      recognizer.maxAlternatives = 1;
+
+      recognizer.onresult = (event) => {
+        let interim = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0]?.transcript?.trim();
+          if (!transcript) continue;
+          if (event.results[i].isFinal) {
+            liveTranscriptFinalText = `${liveTranscriptFinalText} ${transcript}`.trim();
+          } else {
+            interim = `${interim} ${transcript}`.trim();
+          }
+        }
+        updateLiveTranscriptPreview(interim);
+      };
+
+      recognizer.onerror = () => {
+        if (!liveTranscriptFinalText) {
+          $("liveTranscript").textContent = "Live transcription blocked or unavailable (permission/browser limit).";
+        }
+      };
+
+      recognizer.onend = () => {
+        if (deviceSpeechRecognizer && !isStopping) {
+          try {
+            recognizer.start();
+          } catch (_err) {}
+        }
+      };
+
+      try {
+        recognizer.start();
+      } catch (_err) {
+        $("liveTranscript").textContent = "Unable to start live transcription.";
+      }
+    }
+
+    function stopDeviceLiveTranscript() {
+      if (!deviceSpeechRecognizer) return;
+      const recognizer = deviceSpeechRecognizer;
+      deviceSpeechRecognizer = null;
+      recognizer.onend = null;
+      try {
+        recognizer.stop();
+      } catch (_err) {}
     }
 
     function stopRecording() {
@@ -374,6 +457,7 @@
       setStatus("Requesting microphone access...");
       setBusy(true);
       resetUiForStart();
+      startDeviceLiveTranscript();
 
       try {
         const sdk = window.SpeechSDK;
